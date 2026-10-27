@@ -21,7 +21,7 @@ The kitchen, end to end:
 
 Four starting scenarios (Grandma's house, Neglected fixer, Mid-century gem, Coastal style challenge) and two modes (Budget and Freedom).
 
-Controls: click to place, `R` to rotate, `Delete` to remove, `Esc` to stop placing, `Ctrl+Z` to undo.
+Controls: click to place, `R` to rotate (arrows show which way the front faces), `Q`/`E` or the ⟲ ⟳ buttons to turn the room and build against any wall, `Delete` to remove, `Esc` to stop placing, `Ctrl+Z` to undo.
 
 ## Development
 

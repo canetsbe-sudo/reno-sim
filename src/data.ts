@@ -428,7 +428,14 @@ export const STARTER_LAYOUT: { id: string; x: number; y: number; rot: Rot }[] = 
   { id: 'base-cabinet', x: 0, y: 3, rot: 1 },
 ];
 
-export const OLD_WINDOWS: { wall: 'back' | 'left'; slot: number }[] = [
+// The four walls of a room: back is y = 0, left is x = 0, front is y = ROOM_D, right is x = ROOM_W.
+// A slot is the tile index along the wall.
+export type WallSide = 'back' | 'left' | 'front' | 'right';
+
+// Doorways into the kitchen. The tile inside each one has to stay clear.
+export const KITCHEN_DOORS: { wall: WallSide; slot: number }[] = [{ wall: 'right', slot: 2 }];
+
+export const OLD_WINDOWS: { wall: WallSide; slot: number }[] = [
   { wall: 'back', slot: 3 },
   { wall: 'left', slot: 4 },
 ];

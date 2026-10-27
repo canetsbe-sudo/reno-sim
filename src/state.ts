@@ -2,6 +2,7 @@
 import {
   DEMO_COST,
   DOOR_ITEMS,
+  KITCHEN_DOORS,
   INSPECTION_COST,
   ISSUES,
   ITEMS,
@@ -16,6 +17,7 @@ import {
   scenarioById,
   type IssueTrigger,
   type Rot,
+  type WallSide,
 } from './data';
 
 export type Mode = 'budget' | 'freedom';
@@ -31,9 +33,14 @@ export interface Placed {
 }
 
 export interface WindowSlot {
-  wall: 'back' | 'left';
+  wall: WallSide;
   slot: number;
   finish: string;
+}
+
+export interface Door {
+  wall: WallSide;
+  slot: number;
 }
 
 export interface Design {
@@ -44,6 +51,7 @@ export interface Design {
   backsplash: string;
   lighting: string;
   windows: WindowSlot[];
+  doors: Door[];
   items: Placed[];
 }
 
@@ -119,6 +127,7 @@ export function newGame(scenarioId: string, mode: Mode, inspect: boolean, rng: R
       ...sc.start,
       backsplash: 'bs-none',
       windows: OLD_WINDOWS.map((w) => ({ ...w, finish: sc.start.window })),
+      doors: KITCHEN_DOORS.map((d) => ({ ...d })),
       items: OLD_LAYOUT.map((p) => ({ uid: uid++, ...p })),
     },
     buildProgress: 0,
@@ -211,14 +220,26 @@ export const footprint = (p: Placed) => {
   return p.rot % 2 ? { w: def.d, d: def.w } : { w: def.w, d: def.d };
 };
 
-export type FitProblem = 'outside' | 'blocked' | 'corner';
+export type FitProblem = 'outside' | 'blocked' | 'corner' | 'doorway';
 
-export const fits = (items: Placed[], cand: Placed, ignoreUid?: number): boolean => !fitProblem(items, cand, ignoreUid);
+export const fits = (items: Placed[], cand: Placed, ignoreUid?: number, doors: Door[] = []): boolean => !fitProblem(items, cand, ignoreUid, doors);
 
-export function fitProblem(items: Placed[], cand: Placed, ignoreUid?: number): FitProblem | undefined {
+// The floor tile just inside a doorway.
+export function doorTile(d: Door): { x: number; y: number } {
+  if (d.wall === 'back') return { x: d.slot, y: 0 };
+  if (d.wall === 'front') return { x: d.slot, y: ROOM_D - 1 };
+  if (d.wall === 'left') return { x: 0, y: d.slot };
+  return { x: ROOM_W - 1, y: d.slot };
+}
+
+export function fitProblem(items: Placed[], cand: Placed, ignoreUid?: number, doors: Door[] = []): FitProblem | undefined {
   const a = footprint(cand);
   if (cand.x < 0 || cand.y < 0 || cand.x + a.w > ROOM_W || cand.y + a.d > ROOM_D) return 'outside';
   const flat = itemById(cand.id).h < 0.1;
+  if (!flat && doors.some((d) => {
+    const t = doorTile(d);
+    return t.x >= cand.x && t.x < cand.x + a.w && t.y >= cand.y && t.y < cand.y + a.d;
+  })) return 'doorway';
   const others = items.filter((o) => o.uid !== ignoreUid);
   const clear = others.every((o) => {
     // Rugs sit under furniture, so they only collide with other rugs.
@@ -263,6 +284,11 @@ export function cornered(items: Placed[]): boolean {
   });
 }
 
+export const touchesWall = (p: Placed) => {
+  const f = footprint(p);
+  return p.x === 0 || p.y === 0 || p.x + f.w === ROOM_W || p.y + f.d === ROOM_D;
+};
+
 export const itemAt = (items: Placed[], x: number, y: number): Placed | undefined => {
   // Prefer furniture over rugs when both cover the tile.
   const hits = items.filter((p) => {
@@ -301,7 +327,7 @@ export function designCost(d: Design): DesignCost {
   if (counters > 0 && !ctr.old) lines.push({ label: `${ctr.name} counters x${counters}`, materials: ctr.cost * counters, labor: ctr.labor });
 
   const splash = finishById(d.backsplash);
-  const againstWall = d.items.filter((p) => itemById(p.id).usesCounter && (p.x === 0 || p.y === 0)).length;
+  const againstWall = d.items.filter((p) => itemById(p.id).usesCounter && touchesWall(p)).length;
   if (againstWall > 0 && splash.cost > 0) lines.push({ label: `${splash.name} backsplash x${againstWall}`, materials: splash.cost * againstWall, labor: splash.labor });
 
   for (const w of d.windows) {
@@ -514,6 +540,7 @@ export function load(): GameState | undefined {
     if (s.version !== 1) return undefined;
     // Saves from before backsplashes existed.
     s.design.backsplash ??= 'bs-none';
+    s.design.doors ??= KITCHEN_DOORS.map((d) => ({ ...d }));
     return s;
   } catch {
     return undefined;
