@@ -12,6 +12,7 @@ import {
   itemById,
   scenarioById,
   type FinishCategory,
+  type WallSide,
   type Rot,
 } from './data';
 import {
@@ -51,6 +52,7 @@ import {
   type Placed,
   type Stage,
 } from './state';
+import { placedFromView, rotToWorld, toWorld, wallFromView, type View } from './view';
 import { CANVAS_H, CANVAS_W, drawScene, pickTile, pickWall, snapshot, type SceneOpts } from './render';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -71,11 +73,13 @@ type DesignTab = FinishCategory | 'furniture' | 'upgrades';
 const ui = {
   tab: 'floor' as DesignTab,
   placing: undefined as string | undefined,
+  // Facing while placing, as seen on screen (0 faces the camera).
   placingRot: 0 as Rot,
   windowStyle: 'win-classic',
   selected: undefined as number | undefined,
   hoverTile: undefined as { x: number; y: number } | undefined,
-  hoverWall: undefined as { wall: 'back' | 'left'; slot: number } | undefined,
+  hoverWall: undefined as { wall: WallSide; slot: number } | undefined,
+  view: 0 as View,
   fading: new Map<number, number>(),
   undo: [] as Design[],
   buildTimer: undefined as number | undefined,
@@ -103,16 +107,39 @@ function draw() {
     if (!state) return;
     const o: SceneOpts = { fading: ui.fading, selectedUid: ui.selected };
     if (state.stage === 'design') {
+      o.arrows = true;
       if (ui.placing && ui.hoverTile) {
-        const p: Placed = { uid: -1, id: ui.placing, x: ui.hoverTile.x, y: ui.hoverTile.y, rot: ui.placingRot };
-        o.ghost = { p, valid: fits(state.design.items, p) };
+        const p: Placed = { uid: -1, ...placedFromView(ui.view, ui.placing, ui.hoverTile.x, ui.hoverTile.y, rotToWorld(ui.view, ui.placingRot)) };
+        o.ghost = { p, valid: fits(state.design.items, p, undefined, state.design.doors) };
       }
       if (ui.tab === 'window' && ui.hoverWall) o.hoverWall = ui.hoverWall;
     }
-    if (state.stage === 'clear' && ui.hoverTile && state.junk.some((j) => j.x === ui.hoverTile!.x && j.y === ui.hoverTile!.y)) o.hoverTile = ui.hoverTile;
+    if (state.stage === 'clear' && ui.hoverTile) {
+      const t = worldTile(ui.hoverTile);
+      if (state.junk.some((j) => j.x === t.x && j.y === t.y)) o.hoverTile = ui.hoverTile;
+    }
+    o.view = ui.view;
     drawScene(ctx, state, o);
   });
 }
+
+// The world tile under a view tile.
+function worldTile(t: { x: number; y: number }) {
+  const [x, y] = toWorld(ui.view, t.x + 0.5, t.y + 0.5);
+  return { x: Math.floor(x), y: Math.floor(y) };
+}
+
+function turnView(step: number) {
+  ui.view = ((ui.view + step + 4) % 4) as View;
+  ui.hoverTile = undefined;
+  ui.hoverWall = undefined;
+  draw();
+}
+
+$('#view-ctl').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-turn]');
+  if (b) turnView(Number(b.dataset.turn));
+});
 
 function canvasPoint(e: PointerEvent) {
   const r = canvas.getBoundingClientRect();
@@ -136,10 +163,15 @@ canvas.addEventListener('pointerdown', (e) => {
   const p = canvasPoint(e);
   const tile = pickTile(p.x, p.y);
   const wall = tile ? undefined : pickWall(p.x, p.y);
-  if (state.stage === 'clear' && tile) clickJunk(tile.x, tile.y, e);
+  if (state.stage === 'clear' && tile) {
+    const t = worldTile(tile);
+    clickJunk(t.x, t.y, e);
+  }
   if (state.stage === 'design') {
-    if (ui.tab === 'window' && wall) clickWindow(wall.wall, wall.slot);
-    else if (tile) clickDesignTile(tile.x, tile.y);
+    if (ui.tab === 'window' && wall) {
+      const w = wallFromView(ui.view, wall.wall, wall.slot);
+      clickWindow(w.wall, w.slot);
+    } else if (tile) clickDesignTile(tile.x, tile.y);
   }
 });
 
@@ -387,8 +419,8 @@ function renderDesign(s: GameState) {
       </div>`
     : `<div class="costs"><div class="row"><span>Build time</span><span>${c.laborDays} days</span></div></div>`;
 
-  if (ui.placing) hint.textContent = 'Click to place · R to rotate · Esc to stop';
-  else if (ui.tab === 'window') hint.textContent = 'Click a wall to place a window';
+  if (ui.placing) hint.textContent = 'Click to place · R to rotate · Esc to stop · Q/E to turn the room';
+  else if (ui.tab === 'window') hint.textContent = 'Click a wall to place a window · Q/E to turn the room to reach the other walls';
   else if (ui.selected !== undefined) hint.textContent = 'Delete to remove · R to rotate · Esc to deselect';
   else hint.textContent = 'Click an item in the room to select it';
 
@@ -589,8 +621,12 @@ function applyFinish(id: string) {
   (s.design as unknown as Record<string, string>)[f.category] = id;
 }
 
-function clickWindow(wall: 'back' | 'left', slot: number) {
+function clickWindow(wall: WallSide, slot: number) {
   const s = state!;
+  if (s.design.doors.some((d) => d.wall === wall && d.slot === slot)) {
+    toast("That's a doorway.");
+    return;
+  }
   pushUndo();
   const at = s.design.windows.findIndex((w) => w.wall === wall && w.slot === slot);
   if (at >= 0 && s.design.windows[at].finish === ui.windowStyle) s.design.windows.splice(at, 1);
@@ -599,12 +635,14 @@ function clickWindow(wall: 'back' | 'left', slot: number) {
   commit();
 }
 
-function clickDesignTile(x: number, y: number) {
+// Takes a view tile; items are stored in world space.
+function clickDesignTile(vx: number, vy: number) {
   const s = state!;
+  const { x, y } = worldTile({ x: vx, y: vy });
   const hit = itemAt(s.design.items, x, y);
   if (ui.placing) {
-    const p: Placed = { uid: s.nextUid, id: ui.placing, x, y, rot: ui.placingRot };
-    const problem = fitProblem(s.design.items, p);
+    const p: Placed = { uid: s.nextUid, ...placedFromView(ui.view, ui.placing, vx, vy, rotToWorld(ui.view, ui.placingRot)) };
+    const problem = fitProblem(s.design.items, p, undefined, s.design.doors);
     // Clicking something that's already there selects it, so it can be moved or removed.
     if (problem === 'blocked' && hit) {
       ui.placing = undefined;
@@ -627,6 +665,7 @@ const FIT_MESSAGES: Record<FitProblem, string> = {
   outside: "That doesn't fit in the room there.",
   blocked: "Something's already there.",
   corner: "Appliance doors need room to open, so they can't sit in a corner between counters.",
+  doorway: 'Keep the doorway clear so people can get in.',
 };
 
 function rotateSelected() {
@@ -639,7 +678,7 @@ function rotateSelected() {
   const p = s.design.items.find((x) => x.uid === ui.selected);
   if (!p) return;
   const turned: Placed = { ...p, rot: ((p.rot + 1) % 4) as Rot };
-  const problem = fitProblem(s.design.items, turned, p.uid);
+  const problem = fitProblem(s.design.items, turned, p.uid, s.design.doors);
   if (problem) {
     toast(problem === 'corner' ? FIT_MESSAGES.corner : 'No room to rotate it there.');
     return;
@@ -657,7 +696,12 @@ function removeSelected() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (!state || state.stage !== 'design' || !modal.classList.contains('hidden')) return;
+  if (!state || !modal.classList.contains('hidden') || $('#game').classList.contains('hidden')) return;
+  if (e.key === 'q' || e.key === 'Q' || e.key === 'e' || e.key === 'E') {
+    turnView(e.key.toLowerCase() === 'q' ? -1 : 1);
+    return;
+  }
+  if (state.stage !== 'design') return;
   if (e.key === 'r' || e.key === 'R') rotateSelected();
   else if (e.key === 'Escape') {
     ui.placing = undefined;
