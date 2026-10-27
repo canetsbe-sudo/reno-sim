@@ -442,7 +442,9 @@ export function finishRoom(s: GameState): RoomResult {
 
 // ---- Saving ----
 
-const SAVE_KEY = 'reno-sim-save-v1';
+// The dev preview shares the site's storage, so it keeps its own save.
+export const CHANNEL_SUFFIX = import.meta.env.VITE_CHANNEL === 'dev' ? '-dev' : '';
+const SAVE_KEY = `reno-sim-save-v1${CHANNEL_SUFFIX}`;
 
 export function save(s: GameState): void {
   try {
