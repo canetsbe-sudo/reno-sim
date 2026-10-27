@@ -597,3 +597,13 @@ main {
     opacity: 0;
   }
 }
+
+.dev-badge {
+  font-size: 14px;
+  vertical-align: middle;
+  background: #5d8fae;
+  color: white;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0;
+}

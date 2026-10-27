@@ -4,6 +4,11 @@ A cozy renovation game for the browser. Pick a tired old house, clear it out, de
 
 Play it at https://canetsbe-sudo.github.io/reno-sim/ (published from `main`).
 
+## Branches
+
+- `dev` is where new work lands. Pull requests target `dev`, and every change to it is published to the preview at https://canetsbe-sudo.github.io/reno-sim/dev/ (it keeps a separate save from the main game).
+- `main` is the stable game. When dev looks good, open a pull request from `dev` into `main` and merge it to promote everything at once.
+
 ## What's in this version
 
 The kitchen, end to end:
