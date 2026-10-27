@@ -3,7 +3,7 @@
 export type Tone = 'warm' | 'cool' | 'neutral';
 export type Style = 'classic' | 'modern' | 'midcentury' | 'coastal' | 'farmhouse';
 
-export type FinishCategory = 'floor' | 'wall' | 'cabinet' | 'counter' | 'window' | 'lighting';
+export type FinishCategory = 'floor' | 'wall' | 'cabinet' | 'counter' | 'backsplash' | 'window' | 'lighting';
 
 export interface Finish {
   id: string;
@@ -11,8 +11,8 @@ export interface Finish {
   name: string;
   color: string;
   accent?: string;
-  pattern?: 'planks' | 'checker' | 'tile' | 'stripes' | 'floral' | 'speckle' | 'none';
-  // Material cost: per floor tile, per wall, per cabinet, or per window.
+  pattern?: 'planks' | 'checker' | 'tile' | 'stripes' | 'floral' | 'speckle' | 'subway' | 'herringbone' | 'zellige' | 'cement' | 'none';
+  // Material cost: per floor tile, per wall, per cabinet, per counter along a wall, or per window.
   cost: number;
   // Crew days for the whole room.
   labor: number;
@@ -63,6 +63,15 @@ export const FINISHES: Finish[] = [
   { id: 'ctr-terrazzo', category: 'counter', name: 'Terrazzo', color: '#e9e1d6', accent: '#d27b5a', pattern: 'speckle', cost: 300, labor: 2, tone: 'warm', styles: ['midcentury'] },
   { id: 'ctr-laminate', category: 'counter', name: 'Budget laminate', color: '#d9d3c7', cost: 50, labor: 1, tone: 'neutral', styles: ['modern'] },
   { id: 'ctr-old-formica', category: 'counter', name: 'Chipped formica', color: '#d6c48f', cost: 0, labor: 0, tone: 'warm', styles: [], old: true },
+
+  // Backsplash (cost per counter piece against a wall)
+  { id: 'bs-none', category: 'backsplash', name: 'None, just paint', color: '#e8e2d6', cost: 0, labor: 0, tone: 'neutral', styles: [] },
+  { id: 'bs-subway', category: 'backsplash', name: 'White subway tile', color: '#f7f6f2', accent: '#cfcac0', pattern: 'subway', cost: 90, labor: 2, tone: 'neutral', styles: ['classic', 'farmhouse', 'modern', 'coastal'] },
+  { id: 'bs-zellige', category: 'backsplash', name: 'Green zellige', color: '#5f8a6e', accent: '#4b735a', pattern: 'zellige', cost: 160, labor: 2, tone: 'warm', styles: ['farmhouse', 'classic'] },
+  { id: 'bs-blue-zellige', category: 'backsplash', name: 'Sea blue zellige', color: '#5d8fae', accent: '#4a7896', pattern: 'zellige', cost: 160, labor: 2, tone: 'cool', styles: ['coastal'] },
+  { id: 'bs-herringbone', category: 'backsplash', name: 'Marble herringbone', color: '#efeeec', accent: '#c4c4c8', pattern: 'herringbone', cost: 220, labor: 3, tone: 'cool', styles: ['classic', 'modern'] },
+  { id: 'bs-cement', category: 'backsplash', name: 'Patterned cement tile', color: '#e9dfcf', accent: '#c2683f', pattern: 'cement', cost: 140, labor: 2, tone: 'warm', styles: ['midcentury', 'farmhouse'] },
+  { id: 'bs-mustard', category: 'backsplash', name: 'Mustard square tile', color: '#d9a441', accent: '#b98a33', pattern: 'zellige', cost: 110, labor: 2, tone: 'warm', styles: ['midcentury'] },
 
   // Windows (cost per window)
   { id: 'win-classic', category: 'window', name: 'Double-hung', color: '#ffffff', cost: 450, labor: 1, tone: 'neutral', styles: ['classic', 'farmhouse'] },
@@ -162,8 +171,9 @@ export interface IssueOption {
   label: string;
   cost: number;
   days: number;
-  // A patch is cheap now but can come back during the build.
+  // A patch is cheap now but can come back during the build, with this chance.
   patch?: boolean;
+  risk?: number;
 }
 
 export interface IssueDef {
@@ -198,7 +208,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'The floor feels spongy near the sink.',
     options: [
       { label: 'Replace the subfloor properly', cost: 1800, days: 3 },
-      { label: 'Patch the worst spots', cost: 600, days: 1, patch: true },
+      { label: 'Patch the worst spots', cost: 600, days: 1, patch: true, risk: 0.5 },
     ],
   },
   {
@@ -209,7 +219,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'Little piles of sawdust by the back door.',
     options: [
       { label: 'Treat and replace damaged joists', cost: 1500, days: 2 },
-      { label: 'Spot treat only', cost: 300, days: 1, patch: true },
+      { label: 'Spot treat only', cost: 300, days: 1, patch: true, risk: 0.6 },
     ],
   },
   {
@@ -220,7 +230,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'A brown stain creeps across one wall.',
     options: [
       { label: 'Fix the pipe and replace drywall', cost: 1300, days: 2 },
-      { label: 'Dry it out and paint over', cost: 250, days: 1, patch: true },
+      { label: 'Dry it out and paint over', cost: 250, days: 1, patch: true, risk: 0.45 },
     ],
   },
   {
@@ -231,7 +241,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'Outlets are warm to the touch.',
     options: [
       { label: 'Rewire the kitchen', cost: 2200, days: 3 },
-      { label: 'Replace just the bad outlets', cost: 400, days: 1, patch: true },
+      { label: 'Replace just the bad outlets', cost: 400, days: 1, patch: true, risk: 0.35 },
     ],
   },
   {
@@ -242,7 +252,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'A musty smell near the corner.',
     options: [
       { label: 'Remediate and add ventilation', cost: 1200, days: 2 },
-      { label: 'Bleach it and hope', cost: 150, days: 1, patch: true },
+      { label: 'Bleach it and hope', cost: 150, days: 1, patch: true, risk: 0.65 },
     ],
   },
   {
@@ -253,7 +263,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'A faint water ring on the ceiling.',
     options: [
       { label: 'Fix the bathroom drain and ceiling', cost: 1600, days: 2 },
-      { label: 'Patch the ceiling for now', cost: 400, days: 1, patch: true },
+      { label: 'Patch the ceiling for now', cost: 400, days: 1, patch: true, risk: 0.4 },
     ],
   },
   {
@@ -263,7 +273,7 @@ export const ISSUES: IssueDef[] = [
     found: 'Installing cabinets, the crew discovers no wall in this house is straight.',
     options: [
       { label: 'Shim and scribe everything', cost: 900, days: 2 },
-      { label: 'Caulk the gaps', cost: 120, days: 0, patch: true },
+      { label: 'Caulk the gaps', cost: 120, days: 0, patch: true, risk: 0.25 },
     ],
   },
 ];
@@ -393,14 +403,17 @@ export const LABOR_RATE = 250;
 
 // The tired kitchen you start with, before demolition.
 export const OLD_LAYOUT: { id: string; x: number; y: number; rot: Rot }[] = [
-  { id: 'fridge', x: 0, y: 0, rot: 0 },
+  { id: 'base-cabinet', x: 0, y: 0, rot: 0 },
   { id: 'base-cabinet', x: 1, y: 0, rot: 0 },
   { id: 'sink-cabinet', x: 2, y: 0, rot: 0 },
   { id: 'base-cabinet', x: 3, y: 0, rot: 0 },
   { id: 'stove', x: 4, y: 0, rot: 0 },
   { id: 'base-cabinet', x: 0, y: 1, rot: 1 },
-  { id: 'base-cabinet', x: 0, y: 2, rot: 1 },
+  { id: 'fridge', x: 0, y: 2, rot: 1 },
 ];
+
+// Appliances with doors that need room to open, so they can't sit in a corner between counters.
+export const DOOR_ITEMS = new Set(['fridge', 'fridge-retro', 'stove', 'stove-pro', 'dishwasher', 'wine-fridge']);
 
 // A ready-made L-shaped kitchen for players who want a head start.
 export const STARTER_LAYOUT: { id: string; x: number; y: number; rot: Rot }[] = [

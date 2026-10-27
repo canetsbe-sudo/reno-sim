@@ -148,6 +148,61 @@ function drawWindow(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', slot: 
   if (!door) poly(ctx, [wallPt(wall, u0 - 0.08, z0 - 0.08), wallPt(wall, u1 + 0.08, z0 - 0.08), wallPt(wall, u1 + 0.08, z0 - 0.16), wallPt(wall, u0 - 0.08, z0 - 0.16)], shade(frame, -0.15));
 }
 
+const SPLASH_H = 0.75;
+
+// Tile above every counter that sits against a wall.
+function drawBacksplash(ctx: CanvasRenderingContext2D, d: Design) {
+  const f = finishById(d.backsplash);
+  if (f.cost === 0) return;
+  const accent = f.accent ?? shade(f.color, -0.2);
+  for (const p of d.items) {
+    const def = itemById(p.id);
+    if (!def.usesCounter) continue;
+    const fp = footprint(p);
+    const spans: ['back' | 'left', number, number][] = [];
+    if (p.y === 0) spans.push(['back', p.x, p.x + fp.w]);
+    if (p.x === 0) spans.push(['left', p.y, p.y + fp.d]);
+    for (const [wall, u0, u1] of spans) {
+      const z0 = def.h;
+      const z1 = def.h + SPLASH_H;
+      const shadeAmt = wall === 'left' ? -0.1 : 0;
+      poly(ctx, [wallPt(wall, u0, z0), wallPt(wall, u1, z0), wallPt(wall, u1, z1), wallPt(wall, u0, z1)], shade(f.color, shadeAmt));
+      const grout = shade(accent, shadeAmt);
+      if (f.pattern === 'subway') {
+        const rows = 6;
+        for (let r = 1; r < rows; r++) line(ctx, wallPt(wall, u0, z0 + (r * SPLASH_H) / rows), wallPt(wall, u1, z0 + (r * SPLASH_H) / rows), grout, 0.8);
+        for (let r = 0; r < rows; r++) {
+          const za = z0 + (r * SPLASH_H) / rows;
+          const zb = za + SPLASH_H / rows;
+          for (let u = u0 + (r % 2 ? 0.25 : 0.5); u < u1; u += 0.5) line(ctx, wallPt(wall, u, za), wallPt(wall, u, zb), grout, 0.8);
+        }
+      } else if (f.pattern === 'zellige') {
+        for (let u = u0; u < u1 - 0.01; u += 0.25) {
+          for (let z = z0; z < z1 - 0.01; z += 0.25) {
+            const k = Math.sin(u * 12.9 + z * 78.2) * 0.5 + 0.5;
+            poly(ctx, [wallPt(wall, u, z), wallPt(wall, u + 0.25, z), wallPt(wall, u + 0.25, z + 0.25), wallPt(wall, u, z + 0.25)], shade(f.color, shadeAmt + (k - 0.5) * 0.18), grout, 0.6);
+          }
+        }
+      } else if (f.pattern === 'herringbone') {
+        for (let u = u0; u < u1 - 0.01; u += 0.25) {
+          for (let z = z0; z < z1 - 0.01; z += 0.25) {
+            const up = Math.round((u - u0) / 0.25 + (z - z0) / 0.25) % 2 === 0;
+            line(ctx, wallPt(wall, u, up ? z : z + 0.25), wallPt(wall, u + 0.25, up ? z + 0.25 : z), grout, 0.8);
+          }
+        }
+      } else if (f.pattern === 'cement') {
+        for (let u = u0; u < u1 - 0.01; u += 0.375) {
+          for (let z = z0; z < z1 - 0.01; z += 0.375) {
+            const m = 0.1875;
+            poly(ctx, [wallPt(wall, u + m, z + 0.04), wallPt(wall, u + 0.335, z + m), wallPt(wall, u + m, z + 0.335), wallPt(wall, u + 0.04, z + m)], grout);
+          }
+        }
+      }
+      line(ctx, wallPt(wall, u0, z1), wallPt(wall, u1, z1), shade(accent, -0.2), 1.5);
+    }
+  }
+}
+
 interface BoxColors {
   top: string;
   left: string; // face toward +y
@@ -338,6 +393,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   const light = finishById(d.lighting);
   drawWall(ctx, 'back', wallF);
   drawWall(ctx, 'left', wallF);
+  drawBacksplash(ctx, d);
   for (const w of d.windows) drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
   if (o.hoverWall) {
     const { wall, slot } = o.hoverWall;
