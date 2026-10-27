@@ -20,6 +20,7 @@ import {
   buildDone,
   buildTick,
   clearDone,
+  CHANNEL_SUFFIX,
   DEFAULT_PATCH_RISK,
   clearSave,
   demolish,
@@ -179,7 +180,7 @@ function closeModal() {
   modal.innerHTML = '';
 }
 
-const BEFORE_KEY = 'reno-sim-before-v1';
+const BEFORE_KEY = `reno-sim-before-v1${CHANNEL_SUFFIX}`;
 function storeBefore(url: string) {
   try {
     localStorage.setItem(BEFORE_KEY, url);
@@ -781,7 +782,7 @@ function showTitle() {
   title.classList.remove('hidden');
   const saved = load();
   title.innerHTML = `
-    <h1>Reno Sim</h1>
+    <h1>Reno Sim${CHANNEL_SUFFIX ? ' <span class="dev-badge">Dev preview</span>' : ''}</h1>
     <p class="tagline">Turn a tired old house into a home, one room at a time.</p>
     <h3>Pick a house</h3>
     <div class="scenarios">${SCENARIOS.map(

@@ -1,9 +1,15 @@
-name: Test and deploy
+name: Publish site
 
+# Publishes main at the site root and dev at /dev/ as one Pages site.
+# Runs when main changes, and after tests pass on a push to dev. A
+# workflow_run always runs from main, which Pages requires for deploys.
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -12,28 +18,39 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: dev
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
-      - if: github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+      - name: Build main
+        working-directory: main
+        run: npm ci && npm run build
+      - name: Build dev
+        working-directory: dev
+        run: npm ci && npm run build
+        env:
+          VITE_CHANNEL: dev
+      - run: cp -r dev/dist main/dist/dev
+      - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: main/dist
 
   deploy:
-    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
