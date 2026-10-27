@@ -20,12 +20,15 @@ import {
   buildDone,
   buildTick,
   clearDone,
+  DEFAULT_PATCH_RISK,
   clearSave,
   demolish,
   designCost,
   finishRoom,
+  fitProblem,
   fits,
   haulJunk,
+  heldPatches,
   isBudget,
   issueOptions,
   itemAt,
@@ -40,6 +43,7 @@ import {
   startBuild,
   stripWalls,
   type Design,
+  type FitProblem,
   type GameState,
   type IssueState,
   type Mode,
@@ -287,11 +291,11 @@ function renderFix(s: GameState) {
   const fixed = s.issues.filter((i) => i.status === 'fixed' || i.status === 'patched');
   panel.innerHTML = `
     <h2>Fix it up</h2>
-    <p class="lead">Deal with what you found. A proper fix costs more now; a patch is cheaper but might come back to bite you.</p>
+    <p class="lead">Deal with what you found. A proper fix costs more now. A patch is a gamble: it might hold and save you money, or come back mid-build and cost more.</p>
     ${open.map((i) => issueCard(s, i)).join('')}
     ${
       fixed.length
-        ? `<div class="note"><b>Handled</b><ul>${fixed.map((i) => `<li>${esc(issueById(i.id).name)}: ${i.status === 'patched' ? 'patched' : 'fixed properly'}</li>`).join('')}</ul></div>`
+        ? `<div class="note"><b>Handled</b><ul>${fixed.map((i) => `<li>${esc(issueById(i.id).name)}: ${i.status === 'patched' ? 'patched, fingers crossed' : 'fixed properly'}</li>`).join('')}</ul></div>`
         : ''
     }
     ${hintsBlock(s)}
@@ -305,7 +309,7 @@ function issueCard(s: GameState, i: IssueState) {
     ${opts
       .map(
         (o, k) => `<button class="opt" data-act="resolve" data-issue="${i.id}" data-opt="${k}">
-          <span>${esc(o.label)}${o.patch ? '<span class="patch">Might come back later</span>' : ''}</span>
+          <span>${esc(o.label)}${o.patch ? `<span class="patch">Gamble: ${Math.round((o.risk ?? DEFAULT_PATCH_RISK) * 100)}% chance it comes back worse</span>` : ''}</span>
           <small>${isBudget(s) ? money(o.cost) + ' · ' : ''}${o.days} day${o.days === 1 ? '' : 's'}</small></button>`,
       )
       .join('')}</div>`;
@@ -317,6 +321,7 @@ const TABS: { id: DesignTab; label: string }[] = [
   { id: 'window', label: 'Windows' },
   { id: 'cabinet', label: 'Cabinets' },
   { id: 'counter', label: 'Counters' },
+  { id: 'backsplash', label: 'Backsplash' },
   { id: 'furniture', label: 'Furniture' },
   { id: 'upgrades', label: 'Upgrades' },
   { id: 'lighting', label: 'Lighting' },
@@ -327,6 +332,7 @@ const unitLabel: Record<FinishCategory, string> = {
   wall: '/wall',
   cabinet: '/cabinet',
   counter: '/counter',
+  backsplash: '/counter on a wall',
   window: '/window',
   lighting: '',
 };
@@ -382,6 +388,7 @@ function renderDesign(s: GameState) {
 
   if (ui.placing) hint.textContent = 'Click to place · R to rotate · Esc to stop';
   else if (ui.tab === 'window') hint.textContent = 'Click a wall to place a window';
+  else if (ui.selected !== undefined) hint.textContent = 'Delete to remove · R to rotate · Esc to deselect';
   else hint.textContent = 'Click an item in the room to select it';
 
   const r = rate(s);
@@ -593,20 +600,33 @@ function clickWindow(wall: 'back' | 'left', slot: number) {
 
 function clickDesignTile(x: number, y: number) {
   const s = state!;
+  const hit = itemAt(s.design.items, x, y);
   if (ui.placing) {
     const p: Placed = { uid: s.nextUid, id: ui.placing, x, y, rot: ui.placingRot };
-    if (!fits(s.design.items, p)) {
-      toast("That doesn't fit there.");
+    const problem = fitProblem(s.design.items, p);
+    // Clicking something that's already there selects it, so it can be moved or removed.
+    if (problem === 'blocked' && hit) {
+      ui.placing = undefined;
+      ui.selected = hit.uid;
+    } else if (problem) {
+      toast(FIT_MESSAGES[problem]);
       return;
+    } else {
+      pushUndo();
+      s.nextUid++;
+      s.design.items.push(p);
     }
-    pushUndo();
-    s.nextUid++;
-    s.design.items.push(p);
   } else {
-    ui.selected = itemAt(s.design.items, x, y)?.uid;
+    ui.selected = hit?.uid;
   }
   commit();
 }
+
+const FIT_MESSAGES: Record<FitProblem, string> = {
+  outside: "That doesn't fit in the room there.",
+  blocked: "Something's already there.",
+  corner: "Appliance doors need room to open, so they can't sit in a corner between counters.",
+};
 
 function rotateSelected() {
   const s = state!;
@@ -618,8 +638,9 @@ function rotateSelected() {
   const p = s.design.items.find((x) => x.uid === ui.selected);
   if (!p) return;
   const turned: Placed = { ...p, rot: ((p.rot + 1) % 4) as Rot };
-  if (!fits(s.design.items, turned, p.uid)) {
-    toast('No room to rotate it there.');
+  const problem = fitProblem(s.design.items, turned, p.uid);
+  if (problem) {
+    toast(problem === 'corner' ? FIT_MESSAGES.corner : 'No room to rotate it there.');
     return;
   }
   pushUndo();
@@ -714,7 +735,10 @@ function showReveal() {
       <div><div class="stars">${'★'.repeat(Math.floor(res.stars))}${res.stars % 1 ? '½' : ''}<span style="color:#e3d7c5">${'★'.repeat(5 - Math.ceil(res.stars))}</span></div>
         <b>${res.coins.toLocaleString()} coins earned</b>
         ${isBudget(s) ? `<p style="margin:4px 0;font-size:14px">Spent ${money(s.spent)} of ${money(s.budget)} · finished day ${res.finishedDay}${res.finishedDay <= sc.targetDay ? ', ahead of move-in!' : ` (move-in was day ${sc.targetDay})`}</p>` : ''}</div>
-      <div>${r.good.length ? `<b>What people love</b><ul>${r.good.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}
+      <div>${heldPatches(s)
+        .map((i) => `<div class="note"><b>Your gamble paid off.</b> The ${esc(issueById(i.id).name.toLowerCase())} patch held${isBudget(s) && i.saved ? `, saving you ${money(i.saved)}` : ''}.</div>`)
+        .join('')}
+        ${r.good.length ? `<b>What people love</b><ul>${r.good.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}
         ${r.tips.length ? `<b>Next time</b><ul>${r.tips.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}</div>
     </div>
     <div class="modal-actions"><button data-close>Admire it</button><button class="primary" data-act="new-game">New house</button></div>`,

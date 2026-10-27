@@ -9,6 +9,9 @@ import {
   demolish,
   designCost,
   finishRoom,
+  heldPatches,
+  cornered,
+  fitProblem,
   fits,
   haulJunk,
   newGame,
@@ -106,6 +109,36 @@ describe('design', () => {
     expect(fits(items, { uid: 2, id: 'table', x: 7, y: 0, rot: 1 })).toBe(true);
   });
 
+  it('keeps appliance doors out of counter corners', () => {
+    const run = [
+      { uid: 1, id: 'base-cabinet', x: 1, y: 0, rot: 0 as const },
+      { uid: 2, id: 'base-cabinet', x: 0, y: 1, rot: 1 as const },
+    ];
+    expect(fitProblem(run, { uid: 3, id: 'fridge', x: 0, y: 0, rot: 0 })).toBe('corner');
+    expect(fitProblem(run, { uid: 3, id: 'base-cabinet', x: 0, y: 0, rot: 0 })).toBeUndefined();
+    // Adding a counter that boxes in an existing fridge is blocked too.
+    const fridge = [{ uid: 1, id: 'fridge', x: 0, y: 0, rot: 0 as const }, { uid: 2, id: 'base-cabinet', x: 1, y: 0, rot: 0 as const }];
+    expect(fitProblem(fridge, { uid: 3, id: 'base-cabinet', x: 0, y: 1, rot: 1 })).toBe('corner');
+    // A fridge at the end of a straight run is fine.
+    expect(cornered([...fridge])).toBe(false);
+    const sc = newGame('grandma', 'budget', false, never);
+    expect(cornered(sc.design.items)).toBe(false);
+    expect(cornered(STARTER_LAYOUT.map((p, i) => ({ uid: i, ...p })))).toBe(false);
+  });
+
+  it('prices a backsplash per counter against a wall', () => {
+    const s = newGame('grandma', 'budget', false, never);
+    s.design.windows = [];
+    s.design.items = [
+      { uid: 1, id: 'base-cabinet', x: 2, y: 0, rot: 0 },
+      { uid: 2, id: 'base-cabinet', x: 0, y: 3, rot: 1 },
+      { uid: 3, id: 'island', x: 3, y: 3, rot: 0 },
+    ];
+    const without = designCost(s.design).materials;
+    s.design.backsplash = 'bs-subway';
+    expect(designCost(s.design).materials - without).toBe(90 * 2);
+  });
+
   it('prices materials plus crew labor', () => {
     const s = newGame('grandma', 'budget', false, never);
     // The old kitchen costs nothing before the design stage.
@@ -128,6 +161,15 @@ describe('design', () => {
     niceKitchen(s);
     expect(rate(s).stars).toBeGreaterThanOrEqual(4);
   });
+
+  it('does not lower the rating for a patch that holds', () => {
+    const s = newGame('fixer', 'budget', false, always);
+    clearRoom(s);
+    niceKitchen(s);
+    const before = rate(s).stars;
+    resolveIssue(s, 'dry-rot', 1);
+    expect(rate(s).stars).toBe(before);
+  });
 });
 
 describe('build', () => {
@@ -136,14 +178,14 @@ describe('build', () => {
     clearRoom(s);
     resolveIssue(s, 'leaky-sink', 0);
     resolveIssue(s, 'flicker', 0);
-    resolveIssue(s, 'dry-rot', 1);
+    resolveIssue(s, 'dry-rot', 1, always);
     resolveIssue(s, 'termites', 0);
     resolveIssue(s, 'mold', 0);
     expect(openIssues(s)).toHaveLength(0);
     niceKitchen(s);
     const quoted = designCost(s.design).total;
     const spentBefore = s.spent;
-    startBuild(s, always);
+    startBuild(s);
     expect(s.spent - spentBefore).toBe(quoted);
 
     const surprises: string[] = [];
@@ -161,12 +203,21 @@ describe('build', () => {
     expect(res.coins).toBeGreaterThan(0);
   });
 
+  it('a patch that holds saves money and is reported', () => {
+    const s = newGame('fixer', 'budget', false, always);
+    clearRoom(s);
+    resolveIssue(s, 'dry-rot', 1, never);
+    expect(heldPatches(s).map((i) => [i.id, i.saved])).toEqual([['dry-rot', 1200]]);
+    resolveIssue(s, 'termites', 1, always);
+    expect(heldPatches(s)).toHaveLength(1);
+  });
+
   it('refunds the build when going back to design', () => {
     const s = newGame('grandma', 'budget', false, never);
     clearRoom(s);
     niceKitchen(s);
     const spent = s.spent;
-    startBuild(s, never);
+    startBuild(s);
     backToDesign(s);
     expect(s.spent).toBe(spent);
     expect(s.stage).toBe('design');
