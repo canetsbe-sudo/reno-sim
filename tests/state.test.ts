@@ -248,7 +248,7 @@ describe('the beach shack', () => {
 });
 
 describe('the mountain cabin', () => {
-  it('always has the burst pipe', () => {
+  it('falls back to the burst pipe when nothing rolls', () => {
     const s = newGame('mountain-cabin', 'budget', false, never);
     expect(s.issues.filter((i) => i.status === 'hidden').map((i) => i.id)).toContain('burst-pipe');
   });

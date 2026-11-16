@@ -242,7 +242,7 @@ export const ISSUES: IssueDef[] = [
     name: 'Burst frozen pipe',
     trigger: 'floor',
     found: 'Prying up the floor, a supply line split where it froze solid, and it has sprayed with every thaw since.',
-    hint: 'Ice ridges on the joists, and the floor is spongy near the sink.',
+    hint: 'A faint hiss under the floor, and ice ridges on the joists.',
     options: [
       { label: 'Repipe the run and insulate it', cost: 1500, days: 2 },
       { label: 'Weld the split and wrap it', cost: 350, days: 1, patch: true, risk: 0.55 },
