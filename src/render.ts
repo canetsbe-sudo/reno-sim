@@ -1,7 +1,9 @@
 // Isometric canvas renderer for one cutaway room.
 import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
-import { designToView, placedToView, rotDir, toView, toWorld, viewDims, wallFromView, wallSpotToView, type View } from './view';
+import { catSpot } from './cat';
+import { drawCat } from './art/cat';
+import { designToView, placedToView, rotDir, rotToView, toView, toWorld, viewDims, wallFromView, wallSpotToView, type View } from './view';
 import { applianceFront, applianceSide, baseFront, cabLook, cabinetSide, cooktop, pantryFront, sinkBowl } from './art/fronts';
 import { drawFurniture } from './art/furniture';
 import { PX } from './art/surfaces';
@@ -540,6 +542,8 @@ export interface SceneOpts {
   hoverTile?: { x: number; y: number };
   // Junk that is being hauled away fades out.
   fading?: Map<number, number>;
+  // The cat's clock. She picks a new spot each tick; leave it out for a room with no cat.
+  cat?: number;
 }
 
 const depth = (p: Placed) => {
@@ -626,12 +630,22 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     const f = footprint(p);
     castShadow(ctx, P, p.x, p.y, f.w, f.d, itemById(p.id).h);
   }
+  // The cat sits among the furniture, in front of what is behind her.
+  const cat = o.cat === undefined ? undefined : catSpot(s, o.cat);
+  const catAt = cat && toView(v, cat.x + 0.5, cat.y + 0.5);
+  let catDrawn = !cat;
+  const drawTheCat = () => {
+    catDrawn = true;
+    if (cat && catAt) drawCat({ ctx, iso }, catAt[0], catAt[1], rotToView(v, cat.rot), cat.pose);
+  };
   for (const it of all) {
+    if (!catDrawn && catAt && depth(it.p) > catAt[0] + catAt[1]) drawTheCat();
     ctx.save();
     if (it.alpha !== undefined) ctx.globalAlpha = it.alpha;
     drawItem(ctx, it.p, d, it.opts);
     ctx.restore();
   }
+  if (!catDrawn) drawTheCat();
   drawStubs(ctx, d, wallF);
 
   // Room lighting mood: a colour wash over everything drawn, then the glow of each lamp

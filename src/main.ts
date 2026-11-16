@@ -86,6 +86,8 @@ const ui = {
   hoverWall: undefined as { wall: WallSide; slot: number } | undefined,
   view: 0 as View,
   fading: new Map<number, number>(),
+  // The cat's clock: she moves to a new spot each time it ticks.
+  cat: Math.floor(Math.random() * 1000),
   undo: [] as Design[],
   buildTimer: undefined as number | undefined,
   // Whether the cost breakdown under the design panel is open.
@@ -120,7 +122,7 @@ function draw() {
   requestAnimationFrame(() => {
     drawQueued = false;
     if (!state) return;
-    const o: SceneOpts = { fading: ui.fading, selectedUid: ui.selected };
+    const o: SceneOpts = { fading: ui.fading, selectedUid: ui.selected, cat: ui.cat };
     if (state.stage === 'design') {
       o.arrows = true;
       if (ui.placing && ui.hoverTile) {
@@ -137,6 +139,12 @@ function draw() {
     drawScene(ctx, state, o);
   });
 }
+
+// Every so often the cat gets up and settles somewhere else.
+window.setInterval(() => {
+  ui.cat++;
+  draw();
+}, 25000);
 
 // The world tile under a view tile.
 function worldTile(t: { x: number; y: number }) {
