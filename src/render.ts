@@ -95,29 +95,6 @@ function line(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, color: string, lw = 1
   ctx.stroke();
 }
 
-function drawFloor(ctx: CanvasRenderingContext2D, f: Finish) {
-  for (let x = 0; x < RW; x++) {
-    for (let y = 0; y < RD; y++) {
-      let c = f.color;
-      if (f.pattern === 'checker' && (x + y) % 2) c = f.accent ?? c;
-      else if (f.pattern === 'tile' && (x * 7 + y * 3) % 5 === 0) c = shade(f.color, -0.05);
-      poly(ctx, [iso(x, y), iso(x + 1, y), iso(x + 1, y + 1), iso(x, y + 1)], c, f.pattern === 'planks' ? undefined : shade(f.color, -0.12), 0.8);
-      if (f.pattern === 'planks') {
-        for (let k = 1; k < 3; k++) line(ctx, iso(x, y + k / 3), iso(x + 1, y + k / 3), f.accent ?? shade(c, -0.15), 0.7);
-        const off = (y % 2) * 0.5;
-        line(ctx, iso(x + off, y), iso(x + off, y + 1 / 3), f.accent ?? c, 0.6);
-      }
-      if (f.pattern === 'speckle') {
-        ctx.fillStyle = f.accent ?? shade(c, -0.2);
-        for (let k = 0; k < 4; k++) {
-          const [px, py] = iso(x + ((k * 37 + x * 13) % 10) / 10, y + ((k * 53 + y * 7) % 10) / 10);
-          ctx.fillRect(px, py, 2, 1.5);
-        }
-      }
-    }
-  }
-}
-
 function wallPt(wall: WallSide, u: number, z: number): Pt {
   if (wall === 'front') return iso(u, RD, z);
   if (wall === 'right') return iso(RW, u, z);
@@ -137,22 +114,6 @@ function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finis
   const len = wall === 'back' ? RW : RD;
   const tex = wallTexture(f, art.world, WALL_H, art.mold);
   onWall(ctx, art.P, art.world, WALL_H, () => ctx.drawImage(tex, 0, 0));
-  const accent = f.accent ?? shade(f.color, -0.2);
-  if (f.pattern === 'stripes') {
-    for (let u = 0.25; u < len; u += 0.5) line(ctx, wallPt(wall, u, 0), wallPt(wall, u, WALL_H), accent, 3);
-  } else if (f.pattern === 'planks') {
-    for (let z = 0.3; z < WALL_H; z += 0.3) line(ctx, wallPt(wall, 0, z), wallPt(wall, len, z), accent, 1);
-  } else if (f.pattern === 'floral') {
-    ctx.fillStyle = accent;
-    for (let u = 0.3; u < len; u += 0.6) {
-      for (let z = 0.3; z < WALL_H; z += 0.5) {
-        const [px, py] = wallPt(wall, u + ((z * 10) % 2) * 0.15, z);
-        ctx.beginPath();
-        ctx.arc(px, py, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  }
   shadeWall(ctx, art.P, art.world, WALL_H, wall === 'back' ? 0.02 : 0.13, art.cornerAtStart, art.openings);
   // Baseboard and top edge.
   poly(ctx, [wallPt(wall, 0, 0), wallPt(wall, len, 0), wallPt(wall, len, 0.12), wallPt(wall, 0, 0.12)], shade(f.color, -0.3));
@@ -596,8 +557,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
 
   const floorF = finishById(d.floor);
   const floorTex = floorTexture(floorF);
-  if (floorTex) onFloor(ctx, P, () => ctx.drawImage(floorTex, 0, 0));
-  else drawFloor(ctx, floorF);
+  onFloor(ctx, P, () => ctx.drawImage(floorTex, 0, 0));
   shadeFloor(ctx, P);
   sunPools(ctx, P, openings);
   if (o.hoverTile) {

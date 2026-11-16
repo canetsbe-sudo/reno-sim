@@ -2,7 +2,9 @@
 // finish, maps them onto floor and wall planes, and paints light and shadow in room
 // (world) space so everything turns with the camera.
 import { ROOM_D, ROOM_W, type Finish, type WallSide } from '../data';
+import { checkerTile, oldCarpet, oldLino, slate, subfloor, terracotta } from './floors';
 import { hexRgb } from './noise';
+import { drywall, floralPaper, shiplap, stripePaper } from './walls';
 import { PX, grimeLayer, paintMold, paintedWall, woodPlanks, type GrimeKind } from './surfaces';
 
 export type Pt = [number, number];
@@ -47,11 +49,31 @@ export function onWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallSide
 
 // ---- Floor ----
 
-export function floorTexture(f: Finish): HTMLCanvasElement | undefined {
-  if (f.pattern !== 'planks') return undefined;
-  return cached(`floor:${f.id}`, () =>
-    woodPlanks(ROOM_W, ROOM_D, { light: mix(f.color, 255, 0.12), dark: mix(f.accent ?? f.color, 0, 0.32), plankW: 0.25, seed: f.id.length * 7919 }),
-  );
+export function floorTexture(f: Finish): HTMLCanvasElement {
+  return cached(`floor:${f.id}`, () => {
+    const accent = f.accent ?? f.color;
+    switch (f.id) {
+      case 'floor-terracotta':
+        return terracotta(ROOM_W, ROOM_D, f.color, accent);
+      case 'floor-slate':
+        return slate(ROOM_W, ROOM_D, f.color);
+      case 'floor-old-lino':
+        return oldLino(ROOM_W, ROOM_D, f.color, accent);
+      case 'floor-old-carpet':
+        return oldCarpet(ROOM_W, ROOM_D, f.color, accent);
+      case 'floor-subfloor':
+        return subfloor(ROOM_W, ROOM_D, f.color, accent);
+    }
+    if (f.pattern === 'checker') return checkerTile(ROOM_W, ROOM_D, f.color, accent);
+    if (f.pattern === 'tile') return terracotta(ROOM_W, ROOM_D, f.color, accent);
+    if (f.pattern === 'speckle') return oldLino(ROOM_W, ROOM_D, f.color, accent);
+    if (f.pattern === 'planks') {
+      // Vinyl planks are wider and flatter than real boards.
+      const vinyl = f.id === 'floor-vinyl';
+      return woodPlanks(ROOM_W, ROOM_D, { light: mix(f.color, 255, 0.12), dark: mix(accent, 0, vinyl ? 0.18 : 0.32), plankW: vinyl ? 0.34 : 0.25, seed: f.id.length * 7919 });
+    }
+    return paintedWall(ROOM_W, ROOM_D, { color: f.color });
+  });
 }
 
 // ---- Walls ----
@@ -60,10 +82,22 @@ export function floorTexture(f: Finish): HTMLCanvasElement | undefined {
 export type MoldLevel = 0 | 1 | 2;
 const MOLD = { wall: 'left' as WallSide, u: 1.45, z: 1.75 };
 
+const WALL_SEED: Record<WallSide, number> = { back: 31, left: 62, front: 93, right: 124 };
+
+function wallBase(f: Finish, wall: WallSide, wallH: number): HTMLCanvasElement {
+  const len = wallLen(wall);
+  const accent = f.accent ?? f.color;
+  if (f.id === 'wall-drywall') return drywall(len, wallH, f.color);
+  if (f.pattern === 'stripes') return stripePaper(len, wallH, f.color, accent);
+  if (f.pattern === 'planks') return shiplap(len, wallH, f.color, accent);
+  if (f.pattern === 'floral') return floralPaper(len, wallH, f.color, accent, WALL_SEED[wall]);
+  return paintedWall(len, wallH, { color: f.color, grime: f.old ? 0.8 : 0, seed: WALL_SEED[wall] });
+}
+
 export function wallTexture(f: Finish, wall: WallSide, wallH: number, mold: MoldLevel): HTMLCanvasElement {
   const m = wall === MOLD.wall ? mold : 0;
   return cached(`wall:${f.id}:${wall}:${m}`, () => {
-    const c = paintedWall(wallLen(wall), wallH, { color: f.color, grime: f.old ? 0.8 : 0, seed: wall.length * 31 });
+    const c = wallBase(f, wall, wallH);
     if (m === 1) paintMold(c, MOLD.u * PX, (wallH - MOLD.z - 0.35) * PX, 0.26 * PX, 5);
     if (m === 2) {
       paintMold(c, MOLD.u * PX, (wallH - MOLD.z) * PX, 0.62 * PX, 5);
