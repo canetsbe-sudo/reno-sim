@@ -1,6 +1,8 @@
 // Game state and the rules that act on it. No DOM in here, so it is easy to test.
 import {
   DEMO_COST,
+  DOOR_ITEMS,
+  KITCHEN_DOORS,
   INSPECTION_COST,
   ISSUES,
   ITEMS,
@@ -15,6 +17,7 @@ import {
   scenarioById,
   type IssueTrigger,
   type Rot,
+  type WallSide,
 } from './data';
 
 export type Mode = 'budget' | 'freedom';
@@ -30,9 +33,14 @@ export interface Placed {
 }
 
 export interface WindowSlot {
-  wall: 'back' | 'left';
+  wall: WallSide;
   slot: number;
   finish: string;
+}
+
+export interface Door {
+  wall: WallSide;
+  slot: number;
 }
 
 export interface Design {
@@ -40,8 +48,10 @@ export interface Design {
   wall: string;
   cabinet: string;
   counter: string;
+  backsplash: string;
   lighting: string;
   windows: WindowSlot[];
+  doors: Door[];
   items: Placed[];
 }
 
@@ -50,8 +60,10 @@ export type IssueStatus = 'hidden' | 'found' | 'fixed' | 'patched' | 'resurfaced
 export interface IssueState {
   id: string;
   status: IssueStatus;
-  // Patched issues that will come back during the build (rolled when the build starts).
+  // Patched issues that will come back during the build (rolled when patched, kept secret).
   willResurface?: boolean;
+  // What the patch saved over a proper fix, shown at the reveal if it held.
+  saved?: number;
 }
 
 export interface GameState {
@@ -113,7 +125,9 @@ export function newGame(scenarioId: string, mode: Mode, inspect: boolean, rng: R
     issues,
     design: {
       ...sc.start,
+      backsplash: 'bs-none',
       windows: OLD_WINDOWS.map((w) => ({ ...w, finish: sc.start.window })),
+      doors: KITCHEN_DOORS.map((d) => ({ ...d })),
       items: OLD_LAYOUT.map((p) => ({ uid: uid++, ...p })),
     },
     buildProgress: 0,
@@ -176,15 +190,29 @@ export function issueOptions(i: IssueState) {
   return def.options;
 }
 
-export function resolveIssue(s: GameState, issueId: string, optionIndex: number): void {
+export const DEFAULT_PATCH_RISK = 0.4;
+
+export function resolveIssue(s: GameState, issueId: string, optionIndex: number, rng: Rng = Math.random): void {
   const i = s.issues.find((x) => x.id === issueId);
-  if (!i) return;
+  // Only open issues can be dealt with: not ones still hidden, or already fixed or patched.
+  if (!i || (i.status !== 'found' && i.status !== 'resurfaced')) return;
   const opt = issueOptions(i)[optionIndex];
   if (!opt) return;
   if (isBudget(s)) s.spent += opt.cost;
   s.day += opt.days;
-  i.status = opt.patch ? 'patched' : 'fixed';
+  if (opt.patch) {
+    i.status = 'patched';
+    i.willResurface = rng() < (opt.risk ?? DEFAULT_PATCH_RISK);
+    const proper = issueById(i.id).options.find((o) => !o.patch);
+    i.saved = proper ? proper.cost - opt.cost : 0;
+  } else {
+    i.status = 'fixed';
+    i.saved = undefined;
+  }
 }
+
+// Patches that made it through the build without coming back.
+export const heldPatches = (s: GameState) => s.issues.filter((i) => i.status === 'patched' && !i.willResurface);
 
 // ---- Design stage ----
 
@@ -193,18 +221,74 @@ export const footprint = (p: Placed) => {
   return p.rot % 2 ? { w: def.d, d: def.w } : { w: def.w, d: def.d };
 };
 
-export function fits(items: Placed[], cand: Placed, ignoreUid?: number): boolean {
+export type FitProblem = 'outside' | 'blocked' | 'corner' | 'doorway';
+
+export const fits = (items: Placed[], cand: Placed, ignoreUid?: number, doors: Door[] = []): boolean => !fitProblem(items, cand, ignoreUid, doors);
+
+// The floor tile just inside a doorway.
+export function doorTile(d: Door): { x: number; y: number } {
+  if (d.wall === 'back') return { x: d.slot, y: 0 };
+  if (d.wall === 'front') return { x: d.slot, y: ROOM_D - 1 };
+  if (d.wall === 'left') return { x: 0, y: d.slot };
+  return { x: ROOM_W - 1, y: d.slot };
+}
+
+export function fitProblem(items: Placed[], cand: Placed, ignoreUid?: number, doors: Door[] = []): FitProblem | undefined {
   const a = footprint(cand);
-  if (cand.x < 0 || cand.y < 0 || cand.x + a.w > ROOM_W || cand.y + a.d > ROOM_D) return false;
+  if (cand.x < 0 || cand.y < 0 || cand.x + a.w > ROOM_W || cand.y + a.d > ROOM_D) return 'outside';
   const flat = itemById(cand.id).h < 0.1;
-  return items.every((o) => {
-    if (o.uid === ignoreUid) return true;
+  if (!flat && doors.some((d) => {
+    const t = doorTile(d);
+    return t.x >= cand.x && t.x < cand.x + a.w && t.y >= cand.y && t.y < cand.y + a.d;
+  })) return 'doorway';
+  const others = items.filter((o) => o.uid !== ignoreUid);
+  const clear = others.every((o) => {
     // Rugs sit under furniture, so they only collide with other rugs.
     if (flat !== itemById(o.id).h < 0.1) return true;
     const b = footprint(o);
     return cand.x + a.w <= o.x || o.x + b.w <= cand.x || cand.y + a.d <= o.y || o.y + b.d <= cand.y;
   });
+  if (!clear) return 'blocked';
+  if (cornered([...others, cand])) return 'corner';
+  return undefined;
 }
+
+// Pieces that make up a counter run.
+const isRun = (p: Placed) => {
+  const def = itemById(p.id);
+  return def.h >= 0.1 && (def.kind === 'cabinet' || def.kind === 'appliance' || !!def.usesCounter);
+};
+
+// True when an appliance door is boxed in by counters on two perpendicular sides.
+export function cornered(items: Placed[]): boolean {
+  const owner = new Map<string, number>();
+  for (const p of items.filter(isRun)) {
+    const f = footprint(p);
+    for (let x = p.x; x < p.x + f.w; x++) for (let y = p.y; y < p.y + f.d; y++) owner.set(`${x},${y}`, p.uid);
+  }
+  const other = (uid: number, x: number, y: number) => {
+    const o = owner.get(`${x},${y}`);
+    return o !== undefined && o !== uid;
+  };
+  return items.some((p) => {
+    if (!DOOR_ITEMS.has(p.id)) return false;
+    const f = footprint(p);
+    let alongX = false;
+    let alongY = false;
+    for (let x = p.x; x < p.x + f.w; x++) {
+      for (let y = p.y; y < p.y + f.d; y++) {
+        if (other(p.uid, x - 1, y) || other(p.uid, x + 1, y)) alongX = true;
+        if (other(p.uid, x, y - 1) || other(p.uid, x, y + 1)) alongY = true;
+      }
+    }
+    return alongX && alongY;
+  });
+}
+
+export const touchesWall = (p: Placed) => {
+  const f = footprint(p);
+  return p.x === 0 || p.y === 0 || p.x + f.w === ROOM_W || p.y + f.d === ROOM_D;
+};
 
 export const itemAt = (items: Placed[], x: number, y: number): Placed | undefined => {
   // Prefer furniture over rugs when both cover the tile.
@@ -243,6 +327,10 @@ export function designCost(d: Design): DesignCost {
   const ctr = finishById(d.counter);
   if (counters > 0 && !ctr.old) lines.push({ label: `${ctr.name} counters x${counters}`, materials: ctr.cost * counters, labor: ctr.labor });
 
+  const splash = finishById(d.backsplash);
+  const againstWall = d.items.filter((p) => itemById(p.id).usesCounter && touchesWall(p)).length;
+  if (againstWall > 0 && splash.cost > 0) lines.push({ label: `${splash.name} backsplash x${againstWall}`, materials: splash.cost * againstWall, labor: splash.labor });
+
   for (const w of d.windows) {
     const f = finishById(w.finish);
     if (!f.old) lines.push({ label: `${f.name} window`, materials: f.cost, labor: f.labor });
@@ -267,16 +355,13 @@ export function remaining(s: GameState): number {
 
 // ---- Build stage ----
 
-export function startBuild(s: GameState, rng: Rng = Math.random): void {
+export function startBuild(s: GameState): void {
   s.stage = 'build';
   s.buildProgress = 0;
   if (isBudget(s) && !s.buildPaid) {
     const c = designCost(s.design);
     s.spent += c.total;
     s.buildPaid = c.total;
-  }
-  for (const i of s.issues) {
-    if (i.status === 'patched' && i.willResurface === undefined) i.willResurface = rng() < 0.4;
   }
 }
 
@@ -370,7 +455,7 @@ export function rate(s: GameState): Rating {
     good.push('Nice finishing touches.');
   } else tips.push('A rug or cart adds personality.');
 
-  const tones = [d.floor, d.wall, d.cabinet, d.counter].map((id) => finishById(id).tone).filter((t) => t !== 'neutral');
+  const tones = [d.floor, d.wall, d.cabinet, d.counter, d.backsplash].map((id) => finishById(id).tone).filter((t) => t !== 'neutral');
   const clash = tones.includes('warm') && tones.includes('cool');
   if (!clash) {
     pts += 1;
@@ -407,18 +492,13 @@ export function rate(s: GameState): Rating {
 
   const sc = scenarioById(s.scenario);
   if (sc.style) {
-    const picks = [d.floor, d.wall, d.cabinet, d.counter, ...d.windows.map((w) => w.finish)];
+    // Every finish the design panel tags with the brief's style counts, lighting included.
+    const picks = [d.floor, d.wall, d.cabinet, d.counter, d.backsplash, d.lighting, ...d.windows.map((w) => w.finish)];
     const match = picks.filter((id) => finishById(id).styles.includes(sc.style!)).length;
     if (match >= 4) {
       pts += 1.5;
       good.push(`Nails the ${sc.styleLabel} brief.`);
     } else tips.push(`Lean into ${sc.styleLabel} finishes for the brief (${match} of 4 so far).`);
-  }
-
-  const patched = s.issues.filter((i) => i.status === 'patched').length;
-  if (patched > 0) {
-    pts -= 0.5 * patched;
-    tips.push(`${patched} patched problem${patched > 1 ? 's' : ''} lower the house rating.`);
   }
 
   return { stars: clampStars(pts), good, tips: tips.slice(0, 4) };
@@ -459,7 +539,11 @@ export function load(): GameState | undefined {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return undefined;
     const s = JSON.parse(raw) as GameState;
-    return s.version === 1 ? s : undefined;
+    if (s.version !== 1) return undefined;
+    // Saves from before backsplashes existed.
+    s.design.backsplash ??= 'bs-none';
+    s.design.doors ??= KITCHEN_DOORS.map((d) => ({ ...d }));
+    return s;
   } catch {
     return undefined;
   }

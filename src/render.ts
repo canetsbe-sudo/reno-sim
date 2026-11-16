@@ -1,6 +1,7 @@
 // Isometric canvas renderer for one cutaway room.
-import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish } from './data';
+import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
+import { designToView, placedToView, rectToView, rotDir, viewDims, wallSpotToView, type View } from './view';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -10,31 +11,51 @@ const MARGIN = 24;
 
 export const CANVAS_W = (ROOM_W + ROOM_D) * (TW / 2) + MARGIN * 2;
 export const CANVAS_H = (ROOM_W + ROOM_D) * (TH / 2) + WALL_H * ZS + MARGIN * 2 + 12;
-const OX = ROOM_D * (TW / 2) + MARGIN;
+// Screen x of the room's back corner for a view. Picking computes this from the view it is
+// given rather than reading OX, which only changes when a frame is drawn.
+const originX = (v: View) => viewDims(v).d * (TW / 2) + MARGIN;
+
+// Room size and origin for the current camera view (width and depth swap on odd turns).
+let RW = ROOM_W;
+let RD = ROOM_D;
+let OX = originX(0);
+function setView(v: View) {
+  const dims = viewDims(v);
+  RW = dims.w;
+  RD = dims.d;
+  OX = originX(v);
+}
 const OY = WALL_H * ZS + MARGIN + 6;
 
 type Pt = [number, number];
 
 export const iso = (x: number, y: number, z = 0): Pt => [OX + (x - y) * (TW / 2), OY + (x + y) * (TH / 2) - z * ZS];
 
-// Screen point to floor tile.
-export function pickTile(sx: number, sy: number): { x: number; y: number } | undefined {
+// A view-space floor point on screen, for a given camera view.
+export const screenPoint = (v: View, x: number, y: number, z = 0): Pt => [originX(v) + (x - y) * (TW / 2), OY + (x + y) * (TH / 2) - z * ZS];
+
+// Screen point to floor tile, in view space.
+export function pickTile(v: View, sx: number, sy: number): { x: number; y: number } | undefined {
+  const { w: RW, d: RD } = viewDims(v);
+  const OX = originX(v);
   const a = (sx - OX) / (TW / 2);
   const b = (sy - OY) / (TH / 2);
   const x = Math.floor((a + b) / 2);
   const y = Math.floor((b - a) / 2);
-  if (x < 0 || y < 0 || x >= ROOM_W || y >= ROOM_D) return undefined;
+  if (x < 0 || y < 0 || x >= RW || y >= RD) return undefined;
   return { x, y };
 }
 
-// Screen point to a window slot on one of the two walls.
-export function pickWall(sx: number, sy: number): { wall: 'back' | 'left'; slot: number } | undefined {
+// Screen point to a slot on one of the two full walls, in view space.
+export function pickWall(v: View, sx: number, sy: number): { wall: WallSide; slot: number } | undefined {
+  const { w: RW, d: RD } = viewDims(v);
+  const OX = originX(v);
   const bx = (sx - OX) / (TW / 2);
   const bz = (bx * (TH / 2) - (sy - OY)) / ZS;
-  if (bx > 0 && bx < ROOM_W && bz > 0 && bz < WALL_H) return { wall: 'back', slot: Math.floor(bx) };
+  if (bx > 0 && bx < RW && bz > 0 && bz < WALL_H) return { wall: 'back', slot: Math.floor(bx) };
   const ly = -(sx - OX) / (TW / 2);
   const lz = (ly * (TH / 2) - (sy - OY)) / ZS;
-  if (ly > 0 && ly < ROOM_D && lz > 0 && lz < WALL_H) return { wall: 'left', slot: Math.floor(ly) };
+  if (ly > 0 && ly < RD && lz > 0 && lz < WALL_H) return { wall: 'left', slot: Math.floor(ly) };
   return undefined;
 }
 
@@ -72,8 +93,8 @@ function line(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, color: string, lw = 1
 }
 
 function drawFloor(ctx: CanvasRenderingContext2D, f: Finish) {
-  for (let x = 0; x < ROOM_W; x++) {
-    for (let y = 0; y < ROOM_D; y++) {
+  for (let x = 0; x < RW; x++) {
+    for (let y = 0; y < RD; y++) {
       let c = f.color;
       if (f.pattern === 'checker' && (x + y) % 2) c = f.accent ?? c;
       else if (f.pattern === 'tile' && (x * 7 + y * 3) % 5 === 0) c = shade(f.color, -0.05);
@@ -94,12 +115,14 @@ function drawFloor(ctx: CanvasRenderingContext2D, f: Finish) {
   }
 }
 
-function wallPt(wall: 'back' | 'left', u: number, z: number): Pt {
+function wallPt(wall: WallSide, u: number, z: number): Pt {
+  if (wall === 'front') return iso(u, RD, z);
+  if (wall === 'right') return iso(RW, u, z);
   return wall === 'back' ? iso(u, 0, z) : iso(0, u, z);
 }
 
 function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finish) {
-  const len = wall === 'back' ? ROOM_W : ROOM_D;
+  const len = wall === 'back' ? RW : RD;
   const base = wall === 'back' ? shade(f.color, -0.04) : shade(f.color, -0.14);
   poly(ctx, [wallPt(wall, 0, 0), wallPt(wall, len, 0), wallPt(wall, len, WALL_H), wallPt(wall, 0, WALL_H)], base);
   const accent = f.accent ?? shade(f.color, -0.2);
@@ -123,7 +146,7 @@ function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finis
   line(ctx, wallPt(wall, 0, WALL_H), wallPt(wall, len, WALL_H), shade(f.color, -0.35), 2);
 }
 
-function drawWindow(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', slot: number, f: Finish, light: string) {
+function drawWindow(ctx: CanvasRenderingContext2D, wall: WallSide, slot: number, f: Finish, light: string) {
   const big = f.id === 'win-picture';
   const door = f.id === 'win-french';
   const u0 = slot + (big ? 0.06 : 0.18);
@@ -146,6 +169,90 @@ function drawWindow(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', slot: 
     }
   }
   if (!door) poly(ctx, [wallPt(wall, u0 - 0.08, z0 - 0.08), wallPt(wall, u1 + 0.08, z0 - 0.08), wallPt(wall, u1 + 0.08, z0 - 0.16), wallPt(wall, u0 - 0.08, z0 - 0.16)], shade(frame, -0.15));
+}
+
+// An open doorway: a dark passage with a trim frame.
+function drawDoor(ctx: CanvasRenderingContext2D, wall: WallSide, slot: number, wallF: Finish) {
+  const u0 = slot + 0.1;
+  const u1 = slot + 0.9;
+  const z1 = 2.4;
+  const trim = shade(wallF.color, 0.35);
+  poly(ctx, [wallPt(wall, u0 - 0.07, 0), wallPt(wall, u1 + 0.07, 0), wallPt(wall, u1 + 0.07, z1 + 0.1), wallPt(wall, u0 - 0.07, z1 + 0.1)], trim, shade(trim, -0.2));
+  poly(ctx, [wallPt(wall, u0, 0), wallPt(wall, u1, 0), wallPt(wall, u1, z1), wallPt(wall, u0, z1)], '#4a3e35');
+  // A hint of the next room's light.
+  poly(ctx, [wallPt(wall, u0 + 0.1, 0), wallPt(wall, u1 - 0.1, 0), wallPt(wall, u1 - 0.25, z1 - 0.3), wallPt(wall, u0 + 0.25, z1 - 0.3)], 'rgba(255,230,190,0.12)');
+}
+
+const STUB_H = 0.3;
+
+// The front and right walls are cut down so you can see in, like a dollhouse.
+function drawStubs(ctx: CanvasRenderingContext2D, d: Design, wallF: Finish) {
+  const T = 0.12;
+  for (const wall of ['front', 'right'] as const) {
+    const len = wall === 'front' ? RW : RD;
+    for (let slot = 0; slot < len; slot++) {
+      if (d.doors.some((x) => x.wall === wall && x.slot === slot)) continue;
+      const win = d.windows.find((w) => w.wall === wall && w.slot === slot);
+      const col = wallF.color;
+      if (wall === 'front') box(ctx, slot, RD, 0, 1, T, STUB_H, { top: win ? '#bfe0f2' : shade(col, 0.2), left: shade(col, -0.08), right: shade(col, -0.2) });
+      else box(ctx, RW, slot, 0, T, 1, STUB_H, { top: win ? '#bfe0f2' : shade(col, 0.2), left: shade(col, -0.08), right: shade(col, -0.2) });
+    }
+  }
+}
+
+const SPLASH_H = 0.75;
+
+// Tile above every counter that sits against a wall.
+function drawBacksplash(ctx: CanvasRenderingContext2D, d: Design) {
+  const f = finishById(d.backsplash);
+  if (f.cost === 0) return;
+  const accent = f.accent ?? shade(f.color, -0.2);
+  for (const p of d.items) {
+    const def = itemById(p.id);
+    if (!def.usesCounter) continue;
+    const fp = footprint(p);
+    const spans: ['back' | 'left', number, number][] = [];
+    if (p.y === 0) spans.push(['back', p.x, p.x + fp.w]);
+    if (p.x === 0) spans.push(['left', p.y, p.y + fp.d]);
+    for (const [wall, u0, u1] of spans) {
+      const z0 = def.h;
+      const z1 = def.h + SPLASH_H;
+      const shadeAmt = wall === 'left' ? -0.1 : 0;
+      poly(ctx, [wallPt(wall, u0, z0), wallPt(wall, u1, z0), wallPt(wall, u1, z1), wallPt(wall, u0, z1)], shade(f.color, shadeAmt));
+      const grout = shade(accent, shadeAmt);
+      if (f.pattern === 'subway') {
+        const rows = 6;
+        for (let r = 1; r < rows; r++) line(ctx, wallPt(wall, u0, z0 + (r * SPLASH_H) / rows), wallPt(wall, u1, z0 + (r * SPLASH_H) / rows), grout, 0.8);
+        for (let r = 0; r < rows; r++) {
+          const za = z0 + (r * SPLASH_H) / rows;
+          const zb = za + SPLASH_H / rows;
+          for (let u = u0 + (r % 2 ? 0.25 : 0.5); u < u1; u += 0.5) line(ctx, wallPt(wall, u, za), wallPt(wall, u, zb), grout, 0.8);
+        }
+      } else if (f.pattern === 'zellige') {
+        for (let u = u0; u < u1 - 0.01; u += 0.25) {
+          for (let z = z0; z < z1 - 0.01; z += 0.25) {
+            const k = Math.sin(u * 12.9 + z * 78.2) * 0.5 + 0.5;
+            poly(ctx, [wallPt(wall, u, z), wallPt(wall, u + 0.25, z), wallPt(wall, u + 0.25, z + 0.25), wallPt(wall, u, z + 0.25)], shade(f.color, shadeAmt + (k - 0.5) * 0.18), grout, 0.6);
+          }
+        }
+      } else if (f.pattern === 'herringbone') {
+        for (let u = u0; u < u1 - 0.01; u += 0.25) {
+          for (let z = z0; z < z1 - 0.01; z += 0.25) {
+            const up = Math.round((u - u0) / 0.25 + (z - z0) / 0.25) % 2 === 0;
+            line(ctx, wallPt(wall, u, up ? z : z + 0.25), wallPt(wall, u + 0.25, up ? z + 0.25 : z), grout, 0.8);
+          }
+        }
+      } else if (f.pattern === 'cement') {
+        for (let u = u0; u < u1 - 0.01; u += 0.375) {
+          for (let z = z0; z < z1 - 0.01; z += 0.375) {
+            const m = 0.1875;
+            poly(ctx, [wallPt(wall, u + m, z + 0.04), wallPt(wall, u + 0.335, z + m), wallPt(wall, u + m, z + 0.335), wallPt(wall, u + 0.04, z + m)], grout);
+          }
+        }
+      }
+      line(ctx, wallPt(wall, u0, z1), wallPt(wall, u1, z1), shade(accent, -0.2), 1.5);
+    }
+  }
 }
 
 interface BoxColors {
@@ -176,6 +283,31 @@ export interface ItemOpts {
   ghost?: boolean;
   valid?: boolean;
   selected?: boolean;
+  arrow?: 'faint' | 'strong';
+}
+
+// An arrow on top of an item pointing the way its front faces.
+function drawArrow(ctx: CanvasRenderingContext2D, p: Placed, strong: boolean) {
+  const { w, d } = footprint(p);
+  const z = itemById(p.id).h + 0.02;
+  const [dx, dy] = rotDir(p.rot as Rot);
+  const cx = p.x + w / 2;
+  const cy = p.y + d / 2;
+  const len = 0.32;
+  const wing = 0.16;
+  // Perpendicular for the arrowhead.
+  const px = -dy;
+  const py = dx;
+  const tip = iso(cx + dx * len, cy + dy * len, z);
+  const back = iso(cx - dx * len * 0.6, cy - dy * len * 0.6, z);
+  const l = iso(cx + dx * (len - 0.18) + px * wing, cy + dy * (len - 0.18) + py * wing, z);
+  const r = iso(cx + dx * (len - 0.18) - px * wing, cy + dy * (len - 0.18) - py * wing, z);
+  ctx.save();
+  ctx.globalAlpha = strong ? 0.95 : 0.3;
+  line(ctx, back, tip, 'rgba(40,30,20,0.55)', 5);
+  line(ctx, back, tip, '#fff', 2.5);
+  poly(ctx, [tip, l, r], '#fff', 'rgba(40,30,20,0.55)', 1.2);
+  ctx.restore();
 }
 
 export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, opts: ItemOpts = {}) {
@@ -184,6 +316,8 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
   const { x, y } = p;
   const h = def.h;
   const frontX = p.rot % 2 === 1;
+  // Fronts facing away from the camera are hidden, so their details are skipped.
+  const facing = p.rot < 2;
   const fp = (u: number, v: number) => frontPt(x, y, w, dep, h, frontX, u, v);
   ctx.save();
   if (opts.ghost) ctx.globalAlpha = 0.6;
@@ -251,7 +385,9 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
     if (def.usesCounter) box(ctx, x - 0.03, y - 0.03, bodyH, w + 0.06, dep + 0.06, 0.08, tones(shade(counterTop, -0.05), counterTop));
 
     const door = shade(sideBase, -0.12);
-    if (def.usesCabinet && def.id !== 'tall-pantry') {
+    if (!facing) {
+      // Back of the piece: nothing to draw.
+    } else if (def.usesCabinet && def.id !== 'tall-pantry') {
       const n = Math.max(1, Math.round(frontX ? dep : w));
       for (let i = 0; i < n; i++) {
         const a = i / n + 0.06 / n;
@@ -269,6 +405,8 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
       line(ctx, fp(0.82, 0.35), fp(0.82, 0.55), '#777', 2.5);
     } else if (def.essential === 'stove') {
       inset(ctx, fp, 0.1, 0.9, 0.12, 0.65, '#30343a', '#555');
+    }
+    if (def.essential === 'stove') {
       for (let i = 0; i < (w > 1 || dep > 1 ? 6 : 4); i++) {
         const k = w > 1 || dep > 1 ? 3 : 2;
         const cu = ((i % k) + 0.5) / k;
@@ -280,6 +418,9 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
         ctx.ellipse(cx, cy, 7, 3.5, 0, 0, Math.PI * 2);
         ctx.stroke();
       }
+    }
+    if (!facing) {
+      // Skip front details.
     } else if (def.id === 'dishwasher' || def.id === 'wine-fridge') {
       inset(ctx, fp, 0.08, 0.92, 0.12, 0.85, def.id === 'wine-fridge' ? '#5a3a4a' : undefined, '#888');
     } else if (def.id === 'coffee-bar') {
@@ -300,10 +441,14 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
         ? [iso(x + 0.25, y + 0.2, h + 0.001), iso(x + 0.25, y + 0.8, h + 0.001), iso(x + 0.75, y + 0.8, h + 0.001), iso(x + 0.75, y + 0.2, h + 0.001)]
         : [iso(x + 0.2, y + 0.25, h + 0.001), iso(x + 0.8, y + 0.25, h + 0.001), iso(x + 0.8, y + 0.75, h + 0.001), iso(x + 0.2, y + 0.75, h + 0.001)];
       poly(ctx, [a, b, c2, e], '#9aa4ab', '#7d868c');
-      const [tx, ty] = iso(x + (frontX ? 0.15 : 0.5), y + (frontX ? 0.5 : 0.15), h);
+      // Faucet at the back edge, opposite the front.
+      const [fdx, fdy] = rotDir(p.rot);
+      const [tx, ty] = iso(x + w / 2 - fdx * 0.35 * w, y + dep / 2 - fdy * 0.35 * dep, h);
       line(ctx, [tx, ty], [tx, ty - 14], '#9aa0a6', 3);
     }
   }
+
+  if (opts.arrow) drawArrow(ctx, p, opts.arrow === 'strong');
 
   if (opts.ghost || opts.selected) {
     const col = opts.ghost ? (opts.valid ? 'rgba(80,170,110,0.9)' : 'rgba(210,80,70,0.9)') : 'rgba(255,190,70,0.95)';
@@ -313,9 +458,12 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
 }
 
 export interface SceneOpts {
+  view?: View;
+  // Ghost and items are in world space; hover targets are in view space.
   ghost?: { p: Placed; valid: boolean };
   selectedUid?: number;
-  hoverWall?: { wall: 'back' | 'left'; slot: number };
+  arrows?: boolean;
+  hoverWall?: { wall: WallSide; slot: number };
   hoverTile?: { x: number; y: number };
   // Junk that is being hauled away fades out.
   fading?: Map<number, number>;
@@ -326,19 +474,42 @@ const depth = (p: Placed) => {
   return p.x + p.y + (f.w + f.d) / 2 + (itemById(p.id).h < 0.1 ? -10 : 0);
 };
 
+// Where each kind of trouble shows itself: a stain before it is found, a mark after.
+// Positions are in the room (world space); drawScene maps them to the current view.
+const WALL_CLUES: Record<string, { wall: WallSide; at: number; h: number; color: string }> = {
+  'water-damage': { wall: 'back', at: 5.5, h: 2.2, color: 'rgba(120,80,30,0.25)' },
+  mold: { wall: 'left', at: 1.2, h: 2.2, color: 'rgba(40,50,35,0.25)' },
+  'peeling-paint': { wall: 'back', at: 2.4, h: 1.4, color: 'rgba(248,244,232,0.45)' },
+  // Low on the wall, under the sill, where rust rings actually form.
+  'salt-rust': { wall: 'left', at: 4.2, h: 0.65, color: 'rgba(160,75,35,0.3)' },
+};
+
+// Each mark is a 1.4 x 1 tile patch with its top-left corner at `at`.
+const MARK_W = 1.4;
+const MARK_D = 1;
+const FLOOR_MARKS: Record<string, { at: [number, number]; color: string; stroke: string }> = {
+  'dry-rot': { at: [2.3, 1.2], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
+  termites: { at: [5.5, 3.6], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
+  'rusty-water-line': { at: [4.6, 2.3], color: 'rgba(130,60,30,0.4)', stroke: 'rgba(130,60,30,0.65)' },
+};
+
 export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneOpts = {}) {
-  const d = s.design;
+  const v = o.view ?? 0;
+  setView(v);
+  const d = designToView(v, s.design);
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
   // Soft shadow under the room.
   ctx.fillStyle = 'rgba(70,50,30,0.12)';
-  poly(ctx, [iso(-0.3, -0.3), iso(ROOM_W + 0.4, -0.3), iso(ROOM_W + 0.4, ROOM_D + 0.4), iso(-0.3, ROOM_D + 0.4)], 'rgba(70,50,30,0.12)');
+  poly(ctx, [iso(-0.3, -0.3), iso(RW + 0.4, -0.3), iso(RW + 0.4, RD + 0.4), iso(-0.3, RD + 0.4)], 'rgba(70,50,30,0.12)');
 
   const wallF = finishById(d.wall);
   const light = finishById(d.lighting);
   drawWall(ctx, 'back', wallF);
   drawWall(ctx, 'left', wallF);
-  for (const w of d.windows) drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
+  drawBacksplash(ctx, d);
+  for (const w of d.windows) if (w.wall === 'back' || w.wall === 'left') drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
+  for (const x of d.doors) if (x.wall === 'back' || x.wall === 'left') drawDoor(ctx, x.wall, x.slot, wallF);
   if (o.hoverWall) {
     const { wall, slot } = o.hoverWall;
     poly(ctx, [wallPt(wall, slot + 0.05, 0.2), wallPt(wall, slot + 0.95, 0.2), wallPt(wall, slot + 0.95, WALL_H - 0.15), wallPt(wall, slot + 0.05, WALL_H - 0.15)], 'rgba(255,200,90,0.18)', 'rgba(230,160,50,0.9)', 2);
@@ -347,13 +518,16 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   // Hints of trouble before it is found.
   for (const i of s.issues) {
     if (i.status !== 'hidden') continue;
-    if (i.id === 'water-damage' || i.id === 'mold') {
-      const [cx, cy] = wallPt(i.id === 'mold' ? 'left' : 'back', i.id === 'mold' ? 1.2 : 5.5, 2.2);
-      ctx.fillStyle = i.id === 'mold' ? 'rgba(40,50,35,0.25)' : 'rgba(120,80,30,0.25)';
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, 22, 14, 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const clue = WALL_CLUES[i.id];
+    if (!clue) continue;
+    const at = wallSpotToView(v, clue.wall, clue.at);
+    // Only the back and left walls are drawn full height; the others are cut down.
+    if (at.wall !== 'back' && at.wall !== 'left') continue;
+    const [cx, cy] = wallPt(at.wall, at.u, clue.h);
+    ctx.fillStyle = clue.color;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 22, 14, 0.3, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawFloor(ctx, finishById(d.floor));
@@ -361,18 +535,23 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     const { x, y } = o.hoverTile;
     poly(ctx, [iso(x, y), iso(x + 1, y), iso(x + 1, y + 1), iso(x, y + 1)], 'rgba(255,255,255,0.25)', 'rgba(230,160,50,0.8)', 1.5);
   }
+  // Trouble you have already found, marked where it is.
   for (const i of s.issues) {
-    if (i.status === 'found' && (i.id === 'dry-rot' || i.id === 'termites')) {
-      const at = i.id === 'dry-rot' ? [2.3, 1.2] : [5.5, 3.6];
-      poly(ctx, [iso(at[0], at[1]), iso(at[0] + 1.4, at[1]), iso(at[0] + 1.4, at[1] + 1), iso(at[0], at[1] + 1)], 'rgba(60,40,20,0.45)', 'rgba(60,40,20,0.7)');
-    }
+    if (i.status !== 'found') continue;
+    const mark = FLOOR_MARKS[i.id];
+    if (!mark) continue;
+    const r = rectToView(v, mark.at[0], mark.at[1], MARK_W, MARK_D);
+    poly(ctx, [iso(r.x, r.y), iso(r.x + r.w, r.y), iso(r.x + r.w, r.y + r.d), iso(r.x, r.y + r.d)], mark.color, mark.stroke);
   }
 
   const all: { p: Placed; opts: ItemOpts; alpha?: number }[] = [
-    ...d.items.map((p) => ({ p, opts: { selected: p.uid === o.selectedUid } })),
-    ...s.junk.map((p) => ({ p, opts: {}, alpha: o.fading?.get(p.uid) })),
+    ...d.items.map((p) => {
+      const selected = p.uid === o.selectedUid;
+      return { p, opts: { selected, arrow: o.arrows ? (selected ? 'strong' : 'faint') : undefined } as ItemOpts };
+    }),
+    ...s.junk.map((p) => ({ p: placedToView(v, p), opts: {}, alpha: o.fading?.get(p.uid) })),
   ];
-  if (o.ghost) all.push({ p: o.ghost.p, opts: { ghost: true, valid: o.ghost.valid } });
+  if (o.ghost) all.push({ p: placedToView(v, o.ghost.p), opts: { ghost: true, valid: o.ghost.valid, arrow: 'strong' } });
   all.sort((a, b) => depth(a.p) - depth(b.p));
   for (const it of all) {
     ctx.save();
@@ -380,6 +559,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     drawItem(ctx, it.p, d, it.opts);
     ctx.restore();
   }
+  drawStubs(ctx, d, wallF);
 
   // Room lighting mood.
   if (light.id !== 'light-daylight') {

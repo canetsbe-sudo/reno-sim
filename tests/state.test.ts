@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEMO_COST, INSPECTION_COST, LABOR_RATE, STARTER_LAYOUT } from '../src/data';
+import { DEMO_COST, INSPECTION_COST, LABOR_RATE, ROOM_D, ROOM_W, SCENARIOS, STARTER_LAYOUT, issueById, itemById } from '../src/data';
 import {
   backToDesign,
   buildDays,
@@ -9,6 +9,9 @@ import {
   demolish,
   designCost,
   finishRoom,
+  heldPatches,
+  cornered,
+  fitProblem,
   fits,
   haulJunk,
   newGame,
@@ -86,6 +89,28 @@ describe('clearing out', () => {
 });
 
 describe('repairs', () => {
+  it('only acts on issues that are found or resurfaced', () => {
+    const s = newGame('fixer', 'budget', false, always);
+    const status = (id: string) => s.issues.find((i) => i.id === id)!.status;
+    const before = { spent: s.spent, day: s.day };
+    // Still hidden under the floor.
+    resolveIssue(s, 'dry-rot', 0);
+    expect(status('dry-rot')).toBe('hidden');
+    // Fixed once; a second fix does nothing.
+    resolveIssue(s, 'leaky-sink', 0);
+    const afterFix = { spent: s.spent, day: s.day };
+    expect(afterFix).not.toEqual(before);
+    resolveIssue(s, 'leaky-sink', 1);
+    expect(status('leaky-sink')).toBe('fixed');
+    expect({ spent: s.spent, day: s.day }).toEqual(afterFix);
+    // A resurfaced patch can still be fixed.
+    clearRoom(s);
+    resolveIssue(s, 'dry-rot', 1, always);
+    s.issues.find((i) => i.id === 'dry-rot')!.status = 'resurfaced';
+    resolveIssue(s, 'dry-rot', 0);
+    expect(status('dry-rot')).toBe('fixed');
+  });
+
   it('a patch is cheaper now', () => {
     const s = newGame('fixer', 'budget', false, always);
     clearRoom(s);
@@ -104,6 +129,36 @@ describe('design', () => {
     expect(fits(items, { uid: 2, id: 'rug', x: 2, y: 2, rot: 0 })).toBe(true);
     expect(fits(items, { uid: 2, id: 'table', x: 7, y: 0, rot: 0 })).toBe(false);
     expect(fits(items, { uid: 2, id: 'table', x: 7, y: 0, rot: 1 })).toBe(true);
+  });
+
+  it('keeps appliance doors out of counter corners', () => {
+    const run = [
+      { uid: 1, id: 'base-cabinet', x: 1, y: 0, rot: 0 as const },
+      { uid: 2, id: 'base-cabinet', x: 0, y: 1, rot: 1 as const },
+    ];
+    expect(fitProblem(run, { uid: 3, id: 'fridge', x: 0, y: 0, rot: 0 })).toBe('corner');
+    expect(fitProblem(run, { uid: 3, id: 'base-cabinet', x: 0, y: 0, rot: 0 })).toBeUndefined();
+    // Adding a counter that boxes in an existing fridge is blocked too.
+    const fridge = [{ uid: 1, id: 'fridge', x: 0, y: 0, rot: 0 as const }, { uid: 2, id: 'base-cabinet', x: 1, y: 0, rot: 0 as const }];
+    expect(fitProblem(fridge, { uid: 3, id: 'base-cabinet', x: 0, y: 1, rot: 1 })).toBe('corner');
+    // A fridge at the end of a straight run is fine.
+    expect(cornered([...fridge])).toBe(false);
+    const sc = newGame('grandma', 'budget', false, never);
+    expect(cornered(sc.design.items)).toBe(false);
+    expect(cornered(STARTER_LAYOUT.map((p, i) => ({ uid: i, ...p })))).toBe(false);
+  });
+
+  it('prices a backsplash per counter against a wall', () => {
+    const s = newGame('grandma', 'budget', false, never);
+    s.design.windows = [];
+    s.design.items = [
+      { uid: 1, id: 'base-cabinet', x: 2, y: 0, rot: 0 },
+      { uid: 2, id: 'base-cabinet', x: 0, y: 3, rot: 1 },
+      { uid: 3, id: 'island', x: 3, y: 3, rot: 0 },
+    ];
+    const without = designCost(s.design).materials;
+    s.design.backsplash = 'bs-subway';
+    expect(designCost(s.design).materials - without).toBe(90 * 2);
   });
 
   it('prices materials plus crew labor', () => {
@@ -128,6 +183,30 @@ describe('design', () => {
     niceKitchen(s);
     expect(rate(s).stars).toBeGreaterThanOrEqual(4);
   });
+
+  it('counts a lighting pick toward the style brief', () => {
+    const s = newGame('midcentury', 'budget', false, never);
+    clearRoom(s);
+    s.design.windows = [];
+    s.design.floor = 'floor-walnut';
+    s.design.wall = 'wall-mustard';
+    s.design.cabinet = 'cab-teak';
+    // Three matching surfaces fall one short of the brief.
+    const nailed = () => rate(s).good.some((g) => g.includes('brief'));
+    expect(nailed()).toBe(false);
+    // Warm and golden is tagged Mid-century in the Lighting tab, so it should make the fourth.
+    s.design.lighting = 'light-warm';
+    expect(nailed()).toBe(true);
+  });
+
+  it('does not lower the rating for a patch that holds', () => {
+    const s = newGame('fixer', 'budget', false, always);
+    clearRoom(s);
+    niceKitchen(s);
+    const before = rate(s).stars;
+    resolveIssue(s, 'dry-rot', 1);
+    expect(rate(s).stars).toBe(before);
+  });
 });
 
 describe('build', () => {
@@ -136,14 +215,14 @@ describe('build', () => {
     clearRoom(s);
     resolveIssue(s, 'leaky-sink', 0);
     resolveIssue(s, 'flicker', 0);
-    resolveIssue(s, 'dry-rot', 1);
+    resolveIssue(s, 'dry-rot', 1, always);
     resolveIssue(s, 'termites', 0);
     resolveIssue(s, 'mold', 0);
     expect(openIssues(s)).toHaveLength(0);
     niceKitchen(s);
     const quoted = designCost(s.design).total;
     const spentBefore = s.spent;
-    startBuild(s, always);
+    startBuild(s);
     expect(s.spent - spentBefore).toBe(quoted);
 
     const surprises: string[] = [];
@@ -161,14 +240,73 @@ describe('build', () => {
     expect(res.coins).toBeGreaterThan(0);
   });
 
+  it('a patch that holds saves money and is reported', () => {
+    const s = newGame('fixer', 'budget', false, always);
+    clearRoom(s);
+    resolveIssue(s, 'dry-rot', 1, never);
+    expect(heldPatches(s).map((i) => [i.id, i.saved])).toEqual([['dry-rot', 1200]]);
+    resolveIssue(s, 'termites', 1, always);
+    expect(heldPatches(s)).toHaveLength(1);
+  });
+
   it('refunds the build when going back to design', () => {
     const s = newGame('grandma', 'budget', false, never);
     clearRoom(s);
     niceKitchen(s);
     const spent = s.spent;
-    startBuild(s, never);
+    startBuild(s);
     backToDesign(s);
     expect(s.spent).toBe(spent);
     expect(s.stage).toBe('design');
+  });
+});
+
+describe('the beach shack', () => {
+  it('always has the paint trouble', () => {
+    const s = newGame('beach-shack', 'budget', false, never);
+    expect(s.issues.filter((i) => i.status === 'hidden').map((i) => i.id)).toContain('peeling-paint');
+  });
+
+  it('surfaces paint, rust, and dry rot at the right moment', () => {
+    const s = newGame('beach-shack', 'budget', false, always);
+    expect(ripFloor(s).map((i) => i.id)).toEqual(['dry-rot', 'rusty-water-line']);
+    expect(stripWalls(s).map((i) => i.id)).toEqual(['peeling-paint', 'salt-rust', 'mold']);
+  });
+
+  it('paint, rust, and dry rot can all be fixed properly', () => {
+    const s = newGame('beach-shack', 'budget', false, always);
+    clearRoom(s);
+    for (const id of ['peeling-paint', 'salt-rust', 'dry-rot']) {
+      expect(s.issues.find((i) => i.id === id)!.status).toBe('found');
+      resolveIssue(s, id, 0);
+      expect(s.issues.find((i) => i.id === id)!.status).toBe('fixed');
+    }
+  });
+});
+
+describe('scenario data', () => {
+  it('pools only real issues that surface during the work', () => {
+    for (const sc of SCENARIOS) {
+      const ids = sc.issuePool.map((p) => p.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const p of sc.issuePool) {
+        // A start-trigger issue is already in every house, so pooling one would double it up.
+        expect(issueById(p.id).trigger).not.toBe('start');
+        expect(p.chance).toBeGreaterThan(0);
+        expect(p.chance).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('hauls only real junk that sits inside the room', () => {
+    for (const sc of SCENARIOS) {
+      for (const j of sc.junk) {
+        expect(itemById(j.id).kind).toBe('junk');
+        expect(j.x).toBeGreaterThanOrEqual(0);
+        expect(j.y).toBeGreaterThanOrEqual(0);
+        expect(j.x).toBeLessThan(ROOM_W);
+        expect(j.y).toBeLessThan(ROOM_D);
+      }
+    }
   });
 });

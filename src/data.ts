@@ -3,7 +3,7 @@
 export type Tone = 'warm' | 'cool' | 'neutral';
 export type Style = 'classic' | 'modern' | 'midcentury' | 'coastal' | 'farmhouse';
 
-export type FinishCategory = 'floor' | 'wall' | 'cabinet' | 'counter' | 'window' | 'lighting';
+export type FinishCategory = 'floor' | 'wall' | 'cabinet' | 'counter' | 'backsplash' | 'window' | 'lighting';
 
 export interface Finish {
   id: string;
@@ -11,8 +11,8 @@ export interface Finish {
   name: string;
   color: string;
   accent?: string;
-  pattern?: 'planks' | 'checker' | 'tile' | 'stripes' | 'floral' | 'speckle' | 'none';
-  // Material cost: per floor tile, per wall, per cabinet, or per window.
+  pattern?: 'planks' | 'checker' | 'tile' | 'stripes' | 'floral' | 'speckle' | 'subway' | 'herringbone' | 'zellige' | 'cement' | 'none';
+  // Material cost: per floor tile, per wall, per cabinet, per counter along a wall, or per window.
   cost: number;
   // Crew days for the whole room.
   labor: number;
@@ -63,6 +63,15 @@ export const FINISHES: Finish[] = [
   { id: 'ctr-terrazzo', category: 'counter', name: 'Terrazzo', color: '#e9e1d6', accent: '#d27b5a', pattern: 'speckle', cost: 300, labor: 2, tone: 'warm', styles: ['midcentury'] },
   { id: 'ctr-laminate', category: 'counter', name: 'Budget laminate', color: '#d9d3c7', cost: 50, labor: 1, tone: 'neutral', styles: ['modern'] },
   { id: 'ctr-old-formica', category: 'counter', name: 'Chipped formica', color: '#d6c48f', cost: 0, labor: 0, tone: 'warm', styles: [], old: true },
+
+  // Backsplash (cost per counter piece against a wall)
+  { id: 'bs-none', category: 'backsplash', name: 'None, just paint', color: '#e8e2d6', cost: 0, labor: 0, tone: 'neutral', styles: [] },
+  { id: 'bs-subway', category: 'backsplash', name: 'White subway tile', color: '#f7f6f2', accent: '#cfcac0', pattern: 'subway', cost: 90, labor: 2, tone: 'neutral', styles: ['classic', 'farmhouse', 'modern', 'coastal'] },
+  { id: 'bs-zellige', category: 'backsplash', name: 'Green zellige', color: '#5f8a6e', accent: '#4b735a', pattern: 'zellige', cost: 160, labor: 2, tone: 'warm', styles: ['farmhouse', 'classic'] },
+  { id: 'bs-blue-zellige', category: 'backsplash', name: 'Sea blue zellige', color: '#5d8fae', accent: '#4a7896', pattern: 'zellige', cost: 160, labor: 2, tone: 'cool', styles: ['coastal'] },
+  { id: 'bs-herringbone', category: 'backsplash', name: 'Marble herringbone', color: '#efeeec', accent: '#c4c4c8', pattern: 'herringbone', cost: 220, labor: 3, tone: 'cool', styles: ['classic', 'modern'] },
+  { id: 'bs-cement', category: 'backsplash', name: 'Patterned cement tile', color: '#e9dfcf', accent: '#c2683f', pattern: 'cement', cost: 140, labor: 2, tone: 'warm', styles: ['midcentury', 'farmhouse'] },
+  { id: 'bs-mustard', category: 'backsplash', name: 'Mustard square tile', color: '#d9a441', accent: '#b98a33', pattern: 'zellige', cost: 110, labor: 2, tone: 'warm', styles: ['midcentury'] },
 
   // Windows (cost per window)
   { id: 'win-classic', category: 'window', name: 'Double-hung', color: '#ffffff', cost: 450, labor: 1, tone: 'neutral', styles: ['classic', 'farmhouse'] },
@@ -147,6 +156,8 @@ export const JUNK: ItemDef[] = [
   { id: 'junk-bags', name: 'Trash bags', kind: 'junk', w: 1, d: 1, h: 0.6, top: '#2f3135', side: '#24262a', cost: 0, labor: 0 },
   { id: 'junk-tv', name: 'Old tube TV', kind: 'junk', w: 1, d: 1, h: 0.8, top: '#4d4a46', side: '#3a3835', cost: 0, labor: 0 },
   { id: 'junk-paint', name: 'Dried-out paint cans', kind: 'junk', w: 1, d: 1, h: 0.4, top: '#b8c4cc', side: '#8f9ba3', cost: 0, labor: 0 },
+  { id: 'junk-net', name: 'Tangled fishing net', kind: 'junk', w: 1, d: 1, h: 0.5, top: '#8fb6ae', side: '#6f938c', cost: 0, labor: 0 },
+  { id: 'junk-driftwood', name: 'Sea-bleached driftwood', kind: 'junk', w: 1, d: 1, h: 0.6, top: '#cbbda6', side: '#a89a83', cost: 0, labor: 0 },
 ];
 
 export const itemById = (id: string): ItemDef => {
@@ -162,8 +173,9 @@ export interface IssueOption {
   label: string;
   cost: number;
   days: number;
-  // A patch is cheap now but can come back during the build.
+  // A patch is cheap now but can come back during the build, with this chance.
   patch?: boolean;
+  risk?: number;
 }
 
 export interface IssueDef {
@@ -198,7 +210,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'The floor feels spongy near the sink.',
     options: [
       { label: 'Replace the subfloor properly', cost: 1800, days: 3 },
-      { label: 'Patch the worst spots', cost: 600, days: 1, patch: true },
+      { label: 'Patch the worst spots', cost: 600, days: 1, patch: true, risk: 0.5 },
     ],
   },
   {
@@ -209,7 +221,18 @@ export const ISSUES: IssueDef[] = [
     hint: 'Little piles of sawdust by the back door.',
     options: [
       { label: 'Treat and replace damaged joists', cost: 1500, days: 2 },
-      { label: 'Spot treat only', cost: 300, days: 1, patch: true },
+      { label: 'Spot treat only', cost: 300, days: 1, patch: true, risk: 0.6 },
+    ],
+  },
+  {
+    id: 'rusty-water-line',
+    name: 'Rusted water line',
+    trigger: 'floor',
+    found: 'The supply line under the floor is rusted through where it crosses a joist, and it has been weeping for years.',
+    hint: 'The water runs faintly brown, and the joists are streaked with rust.',
+    options: [
+      { label: 'Run new supply and drain lines', cost: 1400, days: 2 },
+      { label: 'Clamp and seal the worst joint', cost: 300, days: 1, patch: true, risk: 0.55 },
     ],
   },
   {
@@ -220,7 +243,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'A brown stain creeps across one wall.',
     options: [
       { label: 'Fix the pipe and replace drywall', cost: 1300, days: 2 },
-      { label: 'Dry it out and paint over', cost: 250, days: 1, patch: true },
+      { label: 'Dry it out and paint over', cost: 250, days: 1, patch: true, risk: 0.45 },
     ],
   },
   {
@@ -231,7 +254,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'Outlets are warm to the touch.',
     options: [
       { label: 'Rewire the kitchen', cost: 2200, days: 3 },
-      { label: 'Replace just the bad outlets', cost: 400, days: 1, patch: true },
+      { label: 'Replace just the bad outlets', cost: 400, days: 1, patch: true, risk: 0.35 },
     ],
   },
   {
@@ -242,7 +265,29 @@ export const ISSUES: IssueDef[] = [
     hint: 'A musty smell near the corner.',
     options: [
       { label: 'Remediate and add ventilation', cost: 1200, days: 2 },
-      { label: 'Bleach it and hope', cost: 150, days: 1, patch: true },
+      { label: 'Bleach it and hope', cost: 150, days: 1, patch: true, risk: 0.65 },
+    ],
+  },
+  {
+    id: 'peeling-paint',
+    name: 'Peeling paint',
+    trigger: 'walls',
+    found: 'A dozen coats of paint, blistered and flaking. Scraping it goes down to bare plaster.',
+    hint: 'The paint lifts when you press a fingernail into it.',
+    options: [
+      { label: 'Strip, scrape, prime, and repaint', cost: 900, days: 2 },
+      { label: 'Skim it and paint over the top', cost: 250, days: 1, patch: true, risk: 0.5 },
+    ],
+  },
+  {
+    id: 'salt-rust',
+    name: 'Salt-air rust',
+    trigger: 'walls',
+    found: 'Every bracket, hinge, and the old sink drain are rusted orange. Years of sea air did that.',
+    hint: 'Rust rings stain the wall under the window.',
+    options: [
+      { label: 'Fit corrosion-resistant hardware', cost: 850, days: 1 },
+      { label: 'Wire brush it and paint over the rust', cost: 200, days: 1, patch: true, risk: 0.55 },
     ],
   },
   {
@@ -253,7 +298,7 @@ export const ISSUES: IssueDef[] = [
     hint: 'A faint water ring on the ceiling.',
     options: [
       { label: 'Fix the bathroom drain and ceiling', cost: 1600, days: 2 },
-      { label: 'Patch the ceiling for now', cost: 400, days: 1, patch: true },
+      { label: 'Patch the ceiling for now', cost: 400, days: 1, patch: true, risk: 0.4 },
     ],
   },
   {
@@ -263,7 +308,7 @@ export const ISSUES: IssueDef[] = [
     found: 'Installing cabinets, the crew discovers no wall in this house is straight.',
     options: [
       { label: 'Shim and scribe everything', cost: 900, days: 2 },
-      { label: 'Caulk the gaps', cost: 120, days: 0, patch: true },
+      { label: 'Caulk the gaps', cost: 120, days: 0, patch: true, risk: 0.25 },
     ],
   },
 ];
@@ -371,6 +416,30 @@ export const SCENARIOS: Scenario[] = [
       { id: 'junk-armchair', x: 6, y: 2 },
     ],
   },
+  {
+    id: 'beach-shack',
+    name: 'Beach shack',
+    blurb: 'Salt air ruined the paint and rusted the metalwork. Dry rot where the sea got in.',
+    budget: 26000,
+    targetDay: 32,
+    style: 'coastal',
+    styleLabel: 'Coastal',
+    start: { floor: 'floor-old-lino', wall: 'wall-old-grime', cabinet: 'cab-old-laminate', counter: 'ctr-old-formica', window: 'win-old-alum', lighting: 'light-old-flicker' },
+    issuePool: [
+      { id: 'peeling-paint', chance: 1 },
+      { id: 'salt-rust', chance: 0.9 },
+      { id: 'dry-rot', chance: 0.9 },
+      { id: 'rusty-water-line', chance: 0.75 },
+      { id: 'mold', chance: 0.55 },
+      { id: 'ceiling-leak', chance: 0.45 },
+    ],
+    junk: [
+      { id: 'junk-paint', x: 5, y: 4 },
+      { id: 'junk-net', x: 3, y: 2 },
+      { id: 'junk-driftwood', x: 6, y: 3 },
+      { id: 'junk-boxes', x: 2, y: 4 },
+    ],
+  },
 ];
 
 export const scenarioById = (id: string): Scenario => {
@@ -393,14 +462,17 @@ export const LABOR_RATE = 250;
 
 // The tired kitchen you start with, before demolition.
 export const OLD_LAYOUT: { id: string; x: number; y: number; rot: Rot }[] = [
-  { id: 'fridge', x: 0, y: 0, rot: 0 },
+  { id: 'base-cabinet', x: 0, y: 0, rot: 0 },
   { id: 'base-cabinet', x: 1, y: 0, rot: 0 },
   { id: 'sink-cabinet', x: 2, y: 0, rot: 0 },
   { id: 'base-cabinet', x: 3, y: 0, rot: 0 },
   { id: 'stove', x: 4, y: 0, rot: 0 },
   { id: 'base-cabinet', x: 0, y: 1, rot: 1 },
-  { id: 'base-cabinet', x: 0, y: 2, rot: 1 },
+  { id: 'fridge', x: 0, y: 2, rot: 1 },
 ];
+
+// Appliances with doors that need room to open, so they can't sit in a corner between counters.
+export const DOOR_ITEMS = new Set(['fridge', 'fridge-retro', 'stove', 'stove-pro', 'dishwasher', 'wine-fridge']);
 
 // A ready-made L-shaped kitchen for players who want a head start.
 export const STARTER_LAYOUT: { id: string; x: number; y: number; rot: Rot }[] = [
@@ -415,7 +487,14 @@ export const STARTER_LAYOUT: { id: string; x: number; y: number; rot: Rot }[] = 
   { id: 'base-cabinet', x: 0, y: 3, rot: 1 },
 ];
 
-export const OLD_WINDOWS: { wall: 'back' | 'left'; slot: number }[] = [
+// The four walls of a room: back is y = 0, left is x = 0, front is y = ROOM_D, right is x = ROOM_W.
+// A slot is the tile index along the wall.
+export type WallSide = 'back' | 'left' | 'front' | 'right';
+
+// Doorways into the kitchen. The tile inside each one has to stay clear.
+export const KITCHEN_DOORS: { wall: WallSide; slot: number }[] = [{ wall: 'right', slot: 2 }];
+
+export const OLD_WINDOWS: { wall: WallSide; slot: number }[] = [
   { wall: 'back', slot: 3 },
   { wall: 'left', slot: 4 },
 ];

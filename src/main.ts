@@ -12,6 +12,7 @@ import {
   itemById,
   scenarioById,
   type FinishCategory,
+  type WallSide,
   type Rot,
 } from './data';
 import {
@@ -21,12 +22,15 @@ import {
   buildTick,
   clearDone,
   CHANNEL_SUFFIX,
+  DEFAULT_PATCH_RISK,
   clearSave,
   demolish,
   designCost,
   finishRoom,
+  fitProblem,
   fits,
   haulJunk,
+  heldPatches,
   isBudget,
   issueOptions,
   itemAt,
@@ -41,12 +45,14 @@ import {
   startBuild,
   stripWalls,
   type Design,
+  type FitProblem,
   type GameState,
   type IssueState,
   type Mode,
   type Placed,
   type Stage,
 } from './state';
+import { placedFromView, rotToWorld, toWorld, wallFromView, type View } from './view';
 import { CANVAS_H, CANVAS_W, drawScene, pickTile, pickWall, snapshot, type SceneOpts } from './render';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -67,11 +73,13 @@ type DesignTab = FinishCategory | 'furniture' | 'upgrades';
 const ui = {
   tab: 'floor' as DesignTab,
   placing: undefined as string | undefined,
+  // Facing while placing, as seen on screen (0 faces the camera).
   placingRot: 0 as Rot,
   windowStyle: 'win-classic',
   selected: undefined as number | undefined,
   hoverTile: undefined as { x: number; y: number } | undefined,
-  hoverWall: undefined as { wall: 'back' | 'left'; slot: number } | undefined,
+  hoverWall: undefined as { wall: WallSide; slot: number } | undefined,
+  view: 0 as View,
   fading: new Map<number, number>(),
   undo: [] as Design[],
   buildTimer: undefined as number | undefined,
@@ -99,16 +107,39 @@ function draw() {
     if (!state) return;
     const o: SceneOpts = { fading: ui.fading, selectedUid: ui.selected };
     if (state.stage === 'design') {
+      o.arrows = true;
       if (ui.placing && ui.hoverTile) {
-        const p: Placed = { uid: -1, id: ui.placing, x: ui.hoverTile.x, y: ui.hoverTile.y, rot: ui.placingRot };
-        o.ghost = { p, valid: fits(state.design.items, p) };
+        const p: Placed = { uid: -1, ...placedFromView(ui.view, ui.placing, ui.hoverTile.x, ui.hoverTile.y, rotToWorld(ui.view, ui.placingRot)) };
+        o.ghost = { p, valid: fits(state.design.items, p, undefined, state.design.doors) };
       }
       if (ui.tab === 'window' && ui.hoverWall) o.hoverWall = ui.hoverWall;
     }
-    if (state.stage === 'clear' && ui.hoverTile && state.junk.some((j) => j.x === ui.hoverTile!.x && j.y === ui.hoverTile!.y)) o.hoverTile = ui.hoverTile;
+    if (state.stage === 'clear' && ui.hoverTile) {
+      const t = worldTile(ui.hoverTile);
+      if (state.junk.some((j) => j.x === t.x && j.y === t.y)) o.hoverTile = ui.hoverTile;
+    }
+    o.view = ui.view;
     drawScene(ctx, state, o);
   });
 }
+
+// The world tile under a view tile.
+function worldTile(t: { x: number; y: number }) {
+  const [x, y] = toWorld(ui.view, t.x + 0.5, t.y + 0.5);
+  return { x: Math.floor(x), y: Math.floor(y) };
+}
+
+function turnView(step: number) {
+  ui.view = ((ui.view + step + 4) % 4) as View;
+  ui.hoverTile = undefined;
+  ui.hoverWall = undefined;
+  draw();
+}
+
+$('#view-ctl').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-turn]');
+  if (b) turnView(Number(b.dataset.turn));
+});
 
 function canvasPoint(e: PointerEvent) {
   const r = canvas.getBoundingClientRect();
@@ -118,8 +149,8 @@ function canvasPoint(e: PointerEvent) {
 canvas.addEventListener('pointermove', (e) => {
   if (!state) return;
   const p = canvasPoint(e);
-  ui.hoverTile = pickTile(p.x, p.y);
-  ui.hoverWall = ui.hoverTile ? undefined : pickWall(p.x, p.y);
+  ui.hoverTile = pickTile(ui.view, p.x, p.y);
+  ui.hoverWall = ui.hoverTile ? undefined : pickWall(ui.view, p.x, p.y);
   draw();
 });
 canvas.addEventListener('pointerleave', () => {
@@ -130,12 +161,17 @@ canvas.addEventListener('pointerleave', () => {
 canvas.addEventListener('pointerdown', (e) => {
   if (!state) return;
   const p = canvasPoint(e);
-  const tile = pickTile(p.x, p.y);
-  const wall = tile ? undefined : pickWall(p.x, p.y);
-  if (state.stage === 'clear' && tile) clickJunk(tile.x, tile.y, e);
+  const tile = pickTile(ui.view, p.x, p.y);
+  const wall = tile ? undefined : pickWall(ui.view, p.x, p.y);
+  if (state.stage === 'clear' && tile) {
+    const t = worldTile(tile);
+    clickJunk(t.x, t.y, e);
+  }
   if (state.stage === 'design') {
-    if (ui.tab === 'window' && wall) clickWindow(wall.wall, wall.slot);
-    else if (tile) clickDesignTile(tile.x, tile.y);
+    if (ui.tab === 'window' && wall) {
+      const w = wallFromView(ui.view, wall.wall, wall.slot);
+      clickWindow(w.wall, w.slot);
+    } else if (tile) clickDesignTile(tile.x, tile.y);
   }
 });
 
@@ -288,11 +324,11 @@ function renderFix(s: GameState) {
   const fixed = s.issues.filter((i) => i.status === 'fixed' || i.status === 'patched');
   panel.innerHTML = `
     <h2>Fix it up</h2>
-    <p class="lead">Deal with what you found. A proper fix costs more now; a patch is cheaper but might come back to bite you.</p>
+    <p class="lead">Deal with what you found. A proper fix costs more now. A patch is a gamble: it might hold and save you money, or come back mid-build and cost more.</p>
     ${open.map((i) => issueCard(s, i)).join('')}
     ${
       fixed.length
-        ? `<div class="note"><b>Handled</b><ul>${fixed.map((i) => `<li>${esc(issueById(i.id).name)}: ${i.status === 'patched' ? 'patched' : 'fixed properly'}</li>`).join('')}</ul></div>`
+        ? `<div class="note"><b>Handled</b><ul>${fixed.map((i) => `<li>${esc(issueById(i.id).name)}: ${i.status === 'patched' ? 'patched, fingers crossed' : 'fixed properly'}</li>`).join('')}</ul></div>`
         : ''
     }
     ${hintsBlock(s)}
@@ -306,7 +342,7 @@ function issueCard(s: GameState, i: IssueState) {
     ${opts
       .map(
         (o, k) => `<button class="opt" data-act="resolve" data-issue="${i.id}" data-opt="${k}">
-          <span>${esc(o.label)}${o.patch ? '<span class="patch">Might come back later</span>' : ''}</span>
+          <span>${esc(o.label)}${o.patch ? `<span class="patch">Gamble: ${Math.round((o.risk ?? DEFAULT_PATCH_RISK) * 100)}% chance it comes back worse</span>` : ''}</span>
           <small>${isBudget(s) ? money(o.cost) + ' · ' : ''}${o.days} day${o.days === 1 ? '' : 's'}</small></button>`,
       )
       .join('')}</div>`;
@@ -318,6 +354,7 @@ const TABS: { id: DesignTab; label: string }[] = [
   { id: 'window', label: 'Windows' },
   { id: 'cabinet', label: 'Cabinets' },
   { id: 'counter', label: 'Counters' },
+  { id: 'backsplash', label: 'Backsplash' },
   { id: 'furniture', label: 'Furniture' },
   { id: 'upgrades', label: 'Upgrades' },
   { id: 'lighting', label: 'Lighting' },
@@ -328,6 +365,7 @@ const unitLabel: Record<FinishCategory, string> = {
   wall: '/wall',
   cabinet: '/cabinet',
   counter: '/counter',
+  backsplash: '/counter on a wall',
   window: '/window',
   lighting: '',
 };
@@ -381,8 +419,9 @@ function renderDesign(s: GameState) {
       </div>`
     : `<div class="costs"><div class="row"><span>Build time</span><span>${c.laborDays} days</span></div></div>`;
 
-  if (ui.placing) hint.textContent = 'Click to place · R to rotate · Esc to stop';
-  else if (ui.tab === 'window') hint.textContent = 'Click a wall to place a window';
+  if (ui.placing) hint.textContent = 'Click to place · R to rotate · Esc to stop · Q/E to turn the room';
+  else if (ui.tab === 'window') hint.textContent = 'Click a wall to place a window · Q/E to turn the room to reach the other walls';
+  else if (ui.selected !== undefined) hint.textContent = 'Delete to remove · R to rotate · Esc to deselect';
   else hint.textContent = 'Click an item in the room to select it';
 
   const r = rate(s);
@@ -582,8 +621,12 @@ function applyFinish(id: string) {
   (s.design as unknown as Record<string, string>)[f.category] = id;
 }
 
-function clickWindow(wall: 'back' | 'left', slot: number) {
+function clickWindow(wall: WallSide, slot: number) {
   const s = state!;
+  if (s.design.doors.some((d) => d.wall === wall && d.slot === slot)) {
+    toast("That's a doorway.");
+    return;
+  }
   pushUndo();
   const at = s.design.windows.findIndex((w) => w.wall === wall && w.slot === slot);
   if (at >= 0 && s.design.windows[at].finish === ui.windowStyle) s.design.windows.splice(at, 1);
@@ -592,22 +635,38 @@ function clickWindow(wall: 'back' | 'left', slot: number) {
   commit();
 }
 
-function clickDesignTile(x: number, y: number) {
+// Takes a view tile; items are stored in world space.
+function clickDesignTile(vx: number, vy: number) {
   const s = state!;
+  const { x, y } = worldTile({ x: vx, y: vy });
+  const hit = itemAt(s.design.items, x, y);
   if (ui.placing) {
-    const p: Placed = { uid: s.nextUid, id: ui.placing, x, y, rot: ui.placingRot };
-    if (!fits(s.design.items, p)) {
-      toast("That doesn't fit there.");
+    const p: Placed = { uid: s.nextUid, ...placedFromView(ui.view, ui.placing, vx, vy, rotToWorld(ui.view, ui.placingRot)) };
+    const problem = fitProblem(s.design.items, p, undefined, s.design.doors);
+    // Clicking something that's already there selects it, so it can be moved or removed.
+    if (problem === 'blocked' && hit) {
+      ui.placing = undefined;
+      ui.selected = hit.uid;
+    } else if (problem) {
+      toast(FIT_MESSAGES[problem]);
       return;
+    } else {
+      pushUndo();
+      s.nextUid++;
+      s.design.items.push(p);
     }
-    pushUndo();
-    s.nextUid++;
-    s.design.items.push(p);
   } else {
-    ui.selected = itemAt(s.design.items, x, y)?.uid;
+    ui.selected = hit?.uid;
   }
   commit();
 }
+
+const FIT_MESSAGES: Record<FitProblem, string> = {
+  outside: "That doesn't fit in the room there.",
+  blocked: "Something's already there.",
+  corner: "Appliance doors need room to open, so they can't sit in a corner between counters.",
+  doorway: 'Keep the doorway clear so people can get in.',
+};
 
 function rotateSelected() {
   const s = state!;
@@ -619,8 +678,9 @@ function rotateSelected() {
   const p = s.design.items.find((x) => x.uid === ui.selected);
   if (!p) return;
   const turned: Placed = { ...p, rot: ((p.rot + 1) % 4) as Rot };
-  if (!fits(s.design.items, turned, p.uid)) {
-    toast('No room to rotate it there.');
+  const problem = fitProblem(s.design.items, turned, p.uid, s.design.doors);
+  if (problem) {
+    toast(problem === 'corner' ? FIT_MESSAGES.corner : 'No room to rotate it there.');
     return;
   }
   pushUndo();
@@ -636,7 +696,12 @@ function removeSelected() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (!state || state.stage !== 'design' || !modal.classList.contains('hidden')) return;
+  if (!state || !modal.classList.contains('hidden') || $('#game').classList.contains('hidden')) return;
+  if (e.key === 'q' || e.key === 'Q' || e.key === 'e' || e.key === 'E') {
+    turnView(e.key.toLowerCase() === 'q' ? -1 : 1);
+    return;
+  }
+  if (state.stage !== 'design') return;
   if (e.key === 'r' || e.key === 'R') rotateSelected();
   else if (e.key === 'Escape') {
     ui.placing = undefined;
@@ -715,7 +780,10 @@ function showReveal() {
       <div><div class="stars">${'★'.repeat(Math.floor(res.stars))}${res.stars % 1 ? '½' : ''}<span style="color:#e3d7c5">${'★'.repeat(5 - Math.ceil(res.stars))}</span></div>
         <b>${res.coins.toLocaleString()} coins earned</b>
         ${isBudget(s) ? `<p style="margin:4px 0;font-size:14px">Spent ${money(s.spent)} of ${money(s.budget)} · finished day ${res.finishedDay}${res.finishedDay <= sc.targetDay ? ', ahead of move-in!' : ` (move-in was day ${sc.targetDay})`}</p>` : ''}</div>
-      <div>${r.good.length ? `<b>What people love</b><ul>${r.good.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}
+      <div>${heldPatches(s)
+        .map((i) => `<div class="note"><b>Your gamble paid off.</b> The ${esc(issueById(i.id).name.toLowerCase())} patch held${isBudget(s) && i.saved ? `, saving you ${money(i.saved)}` : ''}.</div>`)
+        .join('')}
+        ${r.good.length ? `<b>What people love</b><ul>${r.good.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}
         ${r.tips.length ? `<b>Next time</b><ul>${r.tips.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}</div>
     </div>
     <div class="modal-actions"><button data-close>Admire it</button><button class="primary" data-act="new-game">New house</button></div>`,
