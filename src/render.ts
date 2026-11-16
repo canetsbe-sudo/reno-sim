@@ -1,7 +1,8 @@
 // Isometric canvas renderer for one cutaway room.
 import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
-import { designToView, placedToView, rectToView, rotDir, viewDims, wallSpotToView, type View } from './view';
+import { designToView, placedToView, rectToView, rotDir, toView, viewDims, wallFromView, wallSpotToView, type View } from './view';
+import { castShadow, floorTexture, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type MoldLevel, type Opening, type Project } from './art/scene';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -121,10 +122,19 @@ function wallPt(wall: WallSide, u: number, z: number): Pt {
   return wall === 'back' ? iso(u, 0, z) : iso(0, u, z);
 }
 
-function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finish) {
+// What the textured wall needs to know about the room it is in.
+interface WallArt {
+  P: Project;
+  world: WallSide;
+  cornerAtStart: boolean;
+  mold: MoldLevel;
+  openings: Opening[];
+}
+
+function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finish, art: WallArt) {
   const len = wall === 'back' ? RW : RD;
-  const base = wall === 'back' ? shade(f.color, -0.04) : shade(f.color, -0.14);
-  poly(ctx, [wallPt(wall, 0, 0), wallPt(wall, len, 0), wallPt(wall, len, WALL_H), wallPt(wall, 0, WALL_H)], base);
+  const tex = wallTexture(f, art.world, WALL_H, art.mold);
+  onWall(ctx, art.P, art.world, WALL_H, () => ctx.drawImage(tex, 0, 0));
   const accent = f.accent ?? shade(f.color, -0.2);
   if (f.pattern === 'stripes') {
     for (let u = 0.25; u < len; u += 0.5) line(ctx, wallPt(wall, u, 0), wallPt(wall, u, WALL_H), accent, 3);
@@ -141,6 +151,7 @@ function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finis
       }
     }
   }
+  shadeWall(ctx, art.P, art.world, WALL_H, wall === 'back' ? 0.02 : 0.13, art.cornerAtStart, art.openings);
   // Baseboard and top edge.
   poly(ctx, [wallPt(wall, 0, 0), wallPt(wall, len, 0), wallPt(wall, len, 0.12), wallPt(wall, 0, 0.12)], shade(f.color, -0.3));
   line(ctx, wallPt(wall, 0, WALL_H), wallPt(wall, len, WALL_H), shade(f.color, -0.35), 2);
@@ -505,8 +516,18 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
 
   const wallF = finishById(d.wall);
   const light = finishById(d.lighting);
-  drawWall(ctx, 'back', wallF);
-  drawWall(ctx, 'left', wallF);
+  const P: Project = (x, y, z = 0) => iso(...toView(v, x, y), z);
+  const moldState = s.issues.find((i) => i.id === 'mold')?.status;
+  const mold: MoldLevel = moldState === 'hidden' ? 1 : moldState === 'found' || moldState === 'resurfaced' ? 2 : 0;
+  const openings: Opening[] = s.design.windows.map((w) => {
+    const big = w.finish === 'win-picture';
+    const door = w.finish === 'win-french';
+    return { wall: w.wall, u0: w.slot + (big ? 0.06 : 0.18), u1: w.slot + (big ? 0.94 : 0.82), z0: door ? 0.12 : big ? 0.8 : 1.15, z1: door ? 2.35 : 2.45 };
+  });
+  for (const wall of ['back', 'left'] as const) {
+    const world = wallFromView(v, wall, 0).wall;
+    drawWall(ctx, wall, wallF, { P, world, cornerAtStart: wallSpotToView(v, world, 0).u < 0.5, mold, openings });
+  }
   drawBacksplash(ctx, d);
   for (const w of d.windows) if (w.wall === 'back' || w.wall === 'left') drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
   for (const x of d.doors) if (x.wall === 'back' || x.wall === 'left') drawDoor(ctx, x.wall, x.slot, wallF);
@@ -519,7 +540,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   for (const i of s.issues) {
     if (i.status !== 'hidden') continue;
     const clue = WALL_CLUES[i.id];
-    if (!clue) continue;
+    if (!clue || i.id === 'mold') continue;
     const at = wallSpotToView(v, clue.wall, clue.at);
     // Only the back and left walls are drawn full height; the others are cut down.
     if (at.wall !== 'back' && at.wall !== 'left') continue;
@@ -530,7 +551,12 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     ctx.fill();
   }
 
-  drawFloor(ctx, finishById(d.floor));
+  const floorF = finishById(d.floor);
+  const floorTex = floorTexture(floorF);
+  if (floorTex) onFloor(ctx, P, () => ctx.drawImage(floorTex, 0, 0));
+  else drawFloor(ctx, floorF);
+  shadeFloor(ctx, P);
+  sunPools(ctx, P, openings);
   if (o.hoverTile) {
     const { x, y } = o.hoverTile;
     poly(ctx, [iso(x, y), iso(x + 1, y), iso(x + 1, y + 1), iso(x, y + 1)], 'rgba(255,255,255,0.25)', 'rgba(230,160,50,0.8)', 1.5);
@@ -553,6 +579,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   ];
   if (o.ghost) all.push({ p: placedToView(v, o.ghost.p), opts: { ghost: true, valid: o.ghost.valid, arrow: 'strong' } });
   all.sort((a, b) => depth(a.p) - depth(b.p));
+  for (const p of [...s.design.items, ...s.junk]) {
+    const f = footprint(p);
+    castShadow(ctx, P, p.x, p.y, f.w, f.d, itemById(p.id).h, o.fading?.get(p.uid) ?? 1);
+  }
   for (const it of all) {
     ctx.save();
     if (it.alpha !== undefined) ctx.globalAlpha = it.alpha;
