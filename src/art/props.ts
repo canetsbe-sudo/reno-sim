@@ -12,20 +12,20 @@ export interface Kit {
   iso: (x: number, y: number, z?: number) => Pt;
 }
 
-const rgb = (hex: string, k = 1, a = 1) => {
+export const rgb = (hex: string, k = 1, a = 1) => {
   const [r, g, b] = hexRgb(hex).map((c) => Math.max(0, Math.min(255, Math.round(k <= 1 ? c * k : c + (255 - c) * (k - 1)))));
   return `rgba(${r},${g},${b},${a})`;
 };
 
-const tint = (hex: string, k: number) => {
+export const tint = (hex: string, k: number) => {
   const [r, g, b] = hexRgb(hex).map((c) => Math.max(0, Math.min(255, Math.round(k <= 1 ? c * k : c + (255 - c) * (k - 1)))));
   return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
 };
 
 // Screen radii of a floor circle of radius r (in tiles).
-const RX = 50.9;
-const RY = 25.45;
-const ZS = 40;
+export const RX = 50.9;
+export const RY = 25.45;
+export const ZS = 40;
 
 // Tile space (0..1, front toward +y) to view space, for a piece turned to `rot`.
 export function tileSpace(p: { x: number; y: number; rot: number }, w = 1, d = 1) {
@@ -37,14 +37,14 @@ export function tileSpace(p: { x: number; y: number; rot: number }, w = 1, d = 1
   };
 }
 
-type L = (lx: number, ly: number) => Pt;
+export type L = (lx: number, ly: number) => Pt;
 
-interface Part {
+export interface Part {
   key: number; // draw order, back to front
   draw: () => void;
 }
 
-function poly(ctx: CanvasRenderingContext2D, pts: Pt[], fill?: string | CanvasGradient, stroke?: string, lw = 1) {
+export function poly(ctx: CanvasRenderingContext2D, pts: Pt[], fill?: string | CanvasGradient, stroke?: string, lw = 1) {
   ctx.beginPath();
   pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
   ctx.closePath();
@@ -59,7 +59,7 @@ function poly(ctx: CanvasRenderingContext2D, pts: Pt[], fill?: string | CanvasGr
   }
 }
 
-function stroke(ctx: CanvasRenderingContext2D, pts: Pt[], color: string, lw = 1) {
+export function stroke(ctx: CanvasRenderingContext2D, pts: Pt[], color: string, lw = 1) {
   ctx.beginPath();
   pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
   ctx.strokeStyle = color;
@@ -70,7 +70,7 @@ function stroke(ctx: CanvasRenderingContext2D, pts: Pt[], color: string, lw = 1)
 }
 
 // A soft shadow pooled on the floor under something.
-function floorShadow(k: Kit, vx: number, vy: number, r: number, a = 0.42) {
+export function floorShadow(k: Kit, vx: number, vy: number, r: number, a = 0.42) {
   const [bx, by] = k.iso(vx, vy, 0);
   const { ctx } = k;
   ctx.save();
@@ -86,14 +86,14 @@ function floorShadow(k: Kit, vx: number, vy: number, r: number, a = 0.42) {
   ctx.restore();
 }
 
-interface BoxLook {
+export interface BoxLook {
   color: string;
   // Called after the box is drawn, with helpers for points on its top.
   after?: (b: { x: number; y: number; w: number; d: number; z1: number }) => void;
 }
 
 // A box given in tile space. Faces get a little gradient so they do not read as flat.
-function lbox(k: Kit, l: L, lx: number, ly: number, lw: number, ld: number, z: number, h: number, look: BoxLook): Part {
+export function lbox(k: Kit, l: L, lx: number, ly: number, lw: number, ld: number, z: number, h: number, look: BoxLook): Part {
   const [ax, ay] = l(lx, ly);
   const [bx, by] = l(lx + lw, ly + ld);
   const x = Math.min(ax, bx);
@@ -119,7 +119,7 @@ function lbox(k: Kit, l: L, lx: number, ly: number, lw: number, ld: number, z: n
   };
 }
 
-function run(parts: Part[]) {
+export function run(parts: Part[]) {
   parts.sort((a, b) => a.key - b.key);
   for (const p of parts) p.draw();
 }
