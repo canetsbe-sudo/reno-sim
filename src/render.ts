@@ -2,7 +2,9 @@
 import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
 import { designToView, placedToView, rectToView, rotDir, toView, viewDims, wallFromView, wallSpotToView, type View } from './view';
-import { castShadow, floorTexture, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type MoldLevel, type Opening, type Project } from './art/scene';
+import { drawJunk, tileSpace } from './art/props';
+import { hash2 } from './art/noise';
+import { castShadow, floorTexture, grime, onPlane, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type MoldLevel, type Opening, type Project } from './art/scene';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -295,6 +297,30 @@ export interface ItemOpts {
   valid?: boolean;
   selected?: boolean;
   arrow?: 'faint' | 'strong';
+  // The tired original kitchen: yellowed, rusty, chipped.
+  aged?: boolean;
+}
+
+const hexMix = (a: string, b: string, t: number) => {
+  const x = parseInt(a.slice(1), 16);
+  const y = parseInt(b.slice(1), 16);
+  const ch = (s: number) => Math.round(((x >> s) & 255) * (1 - t) + ((y >> s) & 255) * t);
+  return '#' + ((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1);
+};
+
+// Dirt, rust and chips laid over the visible faces of an old piece. Seeds follow the
+// piece's own faces, so each side keeps its marks as the camera turns.
+function drawAge(ctx: CanvasRenderingContext2D, p: Placed, w: number, dep: number, h: number, metal: boolean) {
+  const { x, y } = p;
+  const kind = metal ? 'metal' : 'laminate';
+  const seed = (face: number) => p.uid * 16 + ((face - p.rot + 4) % 4);
+  onPlane(ctx, iso(x, y + dep, h), iso(x + 1, y + dep, h), iso(x, y + dep, h - 1), () => ctx.drawImage(grime(w, h, kind, seed(0)), 0, 0));
+  onPlane(ctx, iso(x + w, y + dep, h), iso(x + w, y + dep - 1, h), iso(x + w, y + dep, h - 1), () => ctx.drawImage(grime(dep, h, kind, seed(1)), 0, 0));
+  // The top is laid out in the piece's own space so its stains turn with it.
+  const def = itemById(p.id);
+  const l = tileSpace(p, w, dep);
+  const c = (lx: number, ly: number) => iso(...l(lx + 0.5 - def.w / 2, ly + 0.5 - def.d / 2), h + 0.002);
+  onPlane(ctx, c(0, 0), c(1, 0), c(0, 1), () => ctx.drawImage(grime(def.w, def.d, 'top', p.uid * 16 + 5), 0, 0));
 }
 
 // An arrow on top of an item pointing the way its front faces.
@@ -335,9 +361,12 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
 
   const cab = finishById(d.cabinet);
   const ctr = finishById(d.counter);
-  const sideBase = def.usesCabinet ? cab.color : def.side;
+  const old = (c: string) => (opts.aged ? hexMix(c, '#c2ad7c', 0.3) : c);
+  const sideBase = old(def.usesCabinet ? cab.color : def.side);
 
-  if (def.kind === 'plant') {
+  if (def.kind === 'junk' && drawJunk({ ctx, iso }, p, def)) {
+    // Drawn by hand in art/props.
+  } else if (def.kind === 'plant') {
     const potH = def.id === 'herbs' ? 0.35 : 0.45;
     const m = 0.22;
     box(ctx, x + m, y + m, 0, w - 2 * m, dep - 2 * m, potH, tones(def.side));
@@ -388,7 +417,7 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
     poly(ctx, [iso(x + 0.1, y + 0.1, 0.01), iso(x + w - 0.1, y + 0.1, 0.01), iso(x + w - 0.1, y + dep - 0.1, 0.01), iso(x + 0.1, y + dep - 0.1, 0.01)], def.top, shade(def.top, -0.25), 2);
     poly(ctx, [iso(x + 0.35, y + 0.35, 0.01), iso(x + w - 0.35, y + 0.35, 0.01), iso(x + w - 0.35, y + dep - 0.35, 0.01), iso(x + 0.35, y + dep - 0.35, 0.01)], undefined, '#f1e3cf', 2);
   } else {
-    const counterTop = def.usesCounter ? ctr.color : def.top;
+    const counterTop = old(def.usesCounter ? ctr.color : def.top);
     const bodyH = def.usesCounter ? h - 0.08 : h;
     const toeKick = def.usesCabinet ? 0.08 : 0;
     if (toeKick) box(ctx, x + 0.04, y + 0.04, 0, w - 0.08, dep - 0.08, toeKick, tones(shade(sideBase, -0.4)));
@@ -403,6 +432,18 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
       for (let i = 0; i < n; i++) {
         const a = i / n + 0.06 / n;
         const b = (i + 1) / n - 0.06 / n;
+        const wear = opts.aged ? hash2(p.uid, i, 3) : 1;
+        if (wear < 0.3) {
+          // A door long gone: the dark inside and a sagging shelf.
+          inset(ctx, fp, a, b, 0.2, 0.72, '#33261b', door);
+          line(ctx, fp(a, 0.47), fp(b, 0.44), '#6b5238', 2);
+          continue;
+        }
+        if (wear < 0.6) {
+          // A door hanging off its top hinge.
+          poly(ctx, [fp(a, 0.17), fp(b, 0.22), fp(b, 0.74), fp(a, 0.72)], shade(sideBase, -0.05), shade(sideBase, -0.4), 1.2);
+          continue;
+        }
         inset(ctx, fp, a, b, 0.2, 0.72, undefined, door);
         line(ctx, fp(a + (b - a) * 0.15, 0.82), fp(b - (b - a) * 0.15, 0.82), door, 2);
       }
@@ -458,6 +499,8 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
       line(ctx, [tx, ty], [tx, ty - 14], '#9aa0a6', 3);
     }
   }
+
+  if (opts.aged && def.kind !== 'junk' && (def.kind === 'cabinet' || def.kind === 'appliance')) drawAge(ctx, p, w, dep, h, def.kind === 'appliance');
 
   if (opts.arrow) drawArrow(ctx, p, opts.arrow === 'strong');
 
@@ -573,15 +616,16 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   const all: { p: Placed; opts: ItemOpts; alpha?: number }[] = [
     ...d.items.map((p) => {
       const selected = p.uid === o.selectedUid;
-      return { p, opts: { selected, arrow: o.arrows ? (selected ? 'strong' : 'faint') : undefined } as ItemOpts };
+      return { p, opts: { selected, aged: !s.demoDone, arrow: o.arrows ? (selected ? 'strong' : 'faint') : undefined } as ItemOpts };
     }),
     ...s.junk.map((p) => ({ p: placedToView(v, p), opts: {}, alpha: o.fading?.get(p.uid) })),
   ];
   if (o.ghost) all.push({ p: placedToView(v, o.ghost.p), opts: { ghost: true, valid: o.ghost.valid, arrow: 'strong' } });
   all.sort((a, b) => depth(a.p) - depth(b.p));
-  for (const p of [...s.design.items, ...s.junk]) {
+  // Junk pools its own shadows, shaped to each pile.
+  for (const p of s.design.items) {
     const f = footprint(p);
-    castShadow(ctx, P, p.x, p.y, f.w, f.d, itemById(p.id).h, o.fading?.get(p.uid) ?? 1);
+    castShadow(ctx, P, p.x, p.y, f.w, f.d, itemById(p.id).h);
   }
   for (const it of all) {
     ctx.save();

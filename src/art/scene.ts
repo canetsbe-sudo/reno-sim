@@ -3,7 +3,7 @@
 // (world) space so everything turns with the camera.
 import { ROOM_D, ROOM_W, type Finish, type WallSide } from '../data';
 import { hexRgb } from './noise';
-import { PX, paintMold, paintedWall, woodPlanks } from './surfaces';
+import { PX, grimeLayer, paintMold, paintedWall, woodPlanks, type GrimeKind } from './surfaces';
 
 export type Pt = [number, number];
 // Room (world) point to screen, for the current camera view.
@@ -26,7 +26,7 @@ const mix = (hex: string, to: number, amt: number) => {
 
 // Draw in a plane's own pixel space: `o` is the plane's origin on screen, `ax` and `ay`
 // are one world unit along its texture axes.
-function onPlane(ctx: CanvasRenderingContext2D, o: Pt, ax: Pt, ay: Pt, fn: () => void) {
+export function onPlane(ctx: CanvasRenderingContext2D, o: Pt, ax: Pt, ay: Pt, fn: () => void) {
   ctx.save();
   ctx.transform((ax[0] - o[0]) / PX, (ax[1] - o[1]) / PX, (ay[0] - o[0]) / PX, (ay[1] - o[1]) / PX, o[0], o[1]);
   fn();
@@ -213,3 +213,7 @@ export function shadeWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallS
     }
   });
 }
+
+// ---- Age ----
+
+export const grime = (w: number, h: number, kind: GrimeKind, seed: number) => cached(`grime:${kind}:${w}:${h}:${seed}`, () => grimeLayer(w, h, kind, seed));

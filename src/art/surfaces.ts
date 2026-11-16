@@ -233,3 +233,91 @@ export function paintMold(c: HTMLCanvasElement, cx: number, cy: number, r: numbe
     ctx.fillRect(x - rad * 2.2, y - rad * 2.2, rad * 4.4, rad * 4.4);
   }
 }
+
+// ---- Age: grime, rust and wear, as a see-through layer over a face ----
+
+export type GrimeKind = 'metal' | 'laminate' | 'top';
+
+// A w x h (world units) transparent layer of dirt for one face of an old appliance or
+// cabinet. Image y runs down from the top of the face.
+export function grimeLayer(w: number, h: number, kind: GrimeKind, seed: number): HTMLCanvasElement {
+  const c = makeCanvas(w * PX, h * PX);
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(c.width, c.height);
+  const px = img.data;
+  const W = c.width;
+  const H = c.height;
+  const R = rng(seed);
+  // Ring stains and a scorch for tops.
+  const rings = kind === 'top' ? [0].map(() => ({ x: (0.2 + R() * 0.6) * W, y: (0.2 + R() * 0.6) * H, r: (0.1 + R() * 0.07) * PX })) : [];
+  const burn = { x: (0.2 + R() * 0.6) * W, y: (0.2 + R() * 0.6) * H, r: (0.1 + R() * 0.08) * PX };
+  for (let y = 0; y < H; y++) {
+    const zf = 1 - y / H; // 0 at the bottom of the face
+    for (let x = 0; x < W; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      const over = (cr: number, cg: number, cb: number, al: number) => {
+        if (al <= 0) return;
+        al = al > 1 ? 1 : al;
+        const na = al + a * (1 - al);
+        r = (cr * al + r * a * (1 - al)) / na;
+        g = (cg * al + g * a * (1 - al)) / na;
+        b = (cb * al + b * a * (1 - al)) / na;
+        a = na;
+      };
+      const u = x / PX;
+      const v = y / PX;
+      const edge = Math.min(x, W - 1 - x, y, H - 1 - y) / PX;
+      const n = fbm(u * 2.2, v * 2.2, 4, seed);
+      if (kind === 'metal') {
+        // Yellowed film of old grease, heavier low down and in streaks.
+        over(150, 118, 58, 0.1 + n * 0.2);
+        over(58, 44, 30, smoothstep(0.5, 0, zf) * 0.3 * (0.5 + n));
+        const streak = smoothstep(0.62, 0.9, noise2(x / 3.5, seed, seed + 2)) * fbm(u * 1.5, v * 0.4, 2, seed + 4);
+        over(84, 60, 34, streak * 0.4);
+        // Rust blooming from the base and the edges, with pitted darker centres.
+        const f = fbm(u * 4.5, v * 4.5, 4, seed + 9) + smoothstep(0.3, 0, zf) * 0.36 + smoothstep(0.1, 0, edge) * 0.2;
+        const rust = smoothstep(0.7, 0.79, f);
+        const pit = smoothstep(0.8, 0.9, f);
+        over(146 - pit * 70, 72 - pit * 38, 30 - pit * 12, rust * 0.9);
+        // A halo of stain around and below each rust patch.
+        over(140, 84, 38, smoothstep(0.58, 0.72, f) * 0.28);
+        // Fine scratches.
+        if (noise2(x / 40 + y / 3, y / 50, seed + 14) > 0.93) over(235, 235, 230, 0.25);
+      } else if (kind === 'laminate') {
+        over(96, 70, 40, 0.06 + n * 0.16);
+        // Water swelling up from the floor, with a tide line.
+        const f = 0.42 - zf * 1.5 + (n - 0.5) * 0.9;
+        over(74, 50, 28, smoothstep(-0.1, 0.3, f) * 0.4);
+        over(60, 38, 20, smoothstep(-0.12, -0.03, f) * (1 - smoothstep(-0.03, 0.06, f)) * 0.22);
+        // Laminate chipped away at the edges, showing the particle board.
+        const chip = noise2(x / 9, y / 9, seed + 21) + smoothstep(0.09, 0, edge) * 0.5;
+        if (chip > 0.93) {
+          const grain = noise2(x * 0.9, y * 0.9, seed + 23);
+          over(176 + grain * 30, 146 + grain * 26, 100 + grain * 20, 0.95);
+        } else if (chip > 0.9) over(50, 34, 20, 0.6);
+        // Greasy fingermarks around where the handles are.
+        over(70, 52, 34, smoothstep(0.62, 0.8, fbm(u * 3, v * 3, 3, seed + 30)) * smoothstep(0.5, 0.9, zf) * 0.3);
+      } else {
+        over(110, 82, 44, 0.05 + smoothstep(0.45, 0.75, n) * 0.3);
+        for (const k of rings) {
+          const dd = Math.abs(Math.hypot(x - k.x, y - k.y) - k.r);
+          over(92, 58, 30, smoothstep(2.4, 0.6, dd) * noise2(x / 9, y / 9, seed) * 0.6);
+        }
+        const bd = Math.hypot(x - burn.x, y - burn.y) / burn.r + (n - 0.5) * 0.8;
+        over(36, 24, 16, smoothstep(1, 0.2, bd) * 0.4);
+        if (noise2(x / 1.7, y / 1.7, seed + 40) > 0.95) over(60, 44, 30, 0.3);
+        over(40, 30, 22, smoothstep(0.06, 0, edge) * 0.3);
+      }
+      const i = (y * W + x) * 4;
+      px[i] = r;
+      px[i + 1] = g;
+      px[i + 2] = b;
+      px[i + 3] = a * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
