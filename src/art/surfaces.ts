@@ -321,3 +321,45 @@ export function grimeLayer(w: number, h: number, kind: GrimeKind, seed: number):
   ctx.putImageData(img, 0, 0);
   return c;
 }
+
+// Fill a w x h (world units) canvas one pixel at a time. `fn` writes r, g, b into `out`.
+export function pixels(w: number, h: number, fn: (x: number, y: number, out: number[]) => void): HTMLCanvasElement {
+  const c = makeCanvas(w * PX, h * PX);
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(c.width, c.height);
+  const px = img.data;
+  const out = [0, 0, 0];
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      fn(x, y, out);
+      const i = (y * c.width + x) * 4;
+      px[i] = out[0];
+      px[i + 1] = out[1];
+      px[i + 2] = out[2];
+      px[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+// Repaint an existing canvas one pixel at a time. `fn` edits r, g, b in `io`.
+export function repaint(c: HTMLCanvasElement, fn: (x: number, y: number, io: number[]) => void) {
+  const ctx = c.getContext('2d')!;
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const px = img.data;
+  const io = [0, 0, 0];
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      const i = (y * c.width + x) * 4;
+      io[0] = px[i];
+      io[1] = px[i + 1];
+      io[2] = px[i + 2];
+      fn(x, y, io);
+      px[i] = io[0];
+      px[i + 1] = io[1];
+      px[i + 2] = io[2];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
