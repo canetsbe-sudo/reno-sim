@@ -158,6 +158,8 @@ export const JUNK: ItemDef[] = [
   { id: 'junk-paint', name: 'Dried-out paint cans', kind: 'junk', w: 1, d: 1, h: 0.4, top: '#b8c4cc', side: '#8f9ba3', cost: 0, labor: 0 },
   { id: 'junk-net', name: 'Tangled fishing net', kind: 'junk', w: 1, d: 1, h: 0.5, top: '#8fb6ae', side: '#6f938c', cost: 0, labor: 0 },
   { id: 'junk-driftwood', name: 'Sea-bleached driftwood', kind: 'junk', w: 1, d: 1, h: 0.6, top: '#cbbda6', side: '#a89a83', cost: 0, labor: 0 },
+  { id: 'junk-logs', name: 'Waterlogged firewood', kind: 'junk', w: 1, d: 1, h: 0.7, top: '#8a6a4a', side: '#6e533a', cost: 0, labor: 0 },
+  { id: 'junk-sled', name: 'Broken sled', kind: 'junk', w: 1, d: 1, h: 0.5, top: '#9a5b45', side: '#7e4636', cost: 0, labor: 0 },
 ];
 
 export const itemById = (id: string): ItemDef => {
@@ -236,6 +238,17 @@ export const ISSUES: IssueDef[] = [
     ],
   },
   {
+    id: 'burst-pipe',
+    name: 'Burst frozen pipe',
+    trigger: 'floor',
+    found: 'Prying up the floor, a supply line split where it froze solid, and it has sprayed with every thaw since.',
+    hint: 'A faint hiss under the floor, and ice ridges on the joists.',
+    options: [
+      { label: 'Repipe the run and insulate it', cost: 1500, days: 2 },
+      { label: 'Weld the split and wrap it', cost: 350, days: 1, patch: true, risk: 0.55 },
+    ],
+  },
+  {
     id: 'water-damage',
     name: 'Water damage',
     trigger: 'walls',
@@ -291,6 +304,17 @@ export const ISSUES: IssueDef[] = [
     ],
   },
   {
+    id: 'chimney-creosote',
+    name: 'Creosote in the chimney',
+    trigger: 'walls',
+    found: 'Stripping the walls exposes the stove flue, choked with black creosote. One more spark is a bad idea.',
+    hint: 'A soot ring on the wall near the stove corner.',
+    options: [
+      { label: 'Sweep the flue end to end', cost: 900, days: 1 },
+      { label: 'Burn it out and hope', cost: 150, days: 1, patch: true, risk: 0.6 },
+    ],
+  },
+  {
     id: 'ceiling-leak',
     name: 'Leak from upstairs',
     trigger: 'build',
@@ -299,6 +323,17 @@ export const ISSUES: IssueDef[] = [
     options: [
       { label: 'Fix the bathroom drain and ceiling', cost: 1600, days: 2 },
       { label: 'Patch the ceiling for now', cost: 400, days: 1, patch: true, risk: 0.4 },
+    ],
+  },
+  {
+    id: 'mice-in-walls',
+    name: 'Mice in the walls',
+    trigger: 'build',
+    found: 'The crew opens a wall and finds the cavity lined with nests. Mice wintered in the insulation.',
+    hint: 'Scratching in the walls after dark.',
+    options: [
+      { label: 'Seal every entry and decontaminate the walls', cost: 1100, days: 2 },
+      { label: 'Set traps and hope they leave', cost: 120, days: 1, patch: true, risk: 0.65 },
     ],
   },
   {
@@ -437,6 +472,27 @@ export const SCENARIOS: Scenario[] = [
       { id: 'junk-paint', x: 5, y: 4 },
       { id: 'junk-net', x: 3, y: 2 },
       { id: 'junk-driftwood', x: 6, y: 3 },
+      { id: 'junk-boxes', x: 2, y: 4 },
+    ],
+  },
+  {
+    id: 'mountain-cabin',
+    name: 'Mountain cabin',
+    blurb: 'One brutal winter: the cold burst a pipe, the chimney choked, and mice moved in.',
+    budget: 26000,
+    targetDay: 32,
+    start: { floor: 'floor-old-carpet', wall: 'wall-old-grime', cabinet: 'cab-old-laminate', counter: 'ctr-old-formica', window: 'win-old-alum', lighting: 'light-old-flicker' },
+    issuePool: [
+      { id: 'burst-pipe', chance: 0.9 },
+      { id: 'chimney-creosote', chance: 0.8 },
+      { id: 'mice-in-walls', chance: 0.7 },
+      { id: 'dry-rot', chance: 0.6 },
+      { id: 'mold', chance: 0.4 },
+    ],
+    junk: [
+      { id: 'junk-logs', x: 6, y: 4 },
+      { id: 'junk-sled', x: 3, y: 2 },
+      { id: 'junk-bags', x: 5, y: 3 },
       { id: 'junk-boxes', x: 2, y: 4 },
     ],
   },
