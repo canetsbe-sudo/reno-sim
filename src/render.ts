@@ -4,7 +4,8 @@ import { footprint, type Design, type GameState, type Placed } from './state';
 import { designToView, placedToView, rectToView, rotDir, toView, viewDims, wallFromView, wallSpotToView, type View } from './view';
 import { drawJunk, tileSpace } from './art/props';
 import { hash2 } from './art/noise';
-import { castShadow, floorTexture, grime, onPlane, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type MoldLevel, type Opening, type Project } from './art/scene';
+import { drawArt } from './art/wallart';
+import { castShadow, floorTexture, grime, onPlane, onWallSlot, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type MoldLevel, type Opening, type Project } from './art/scene';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -158,6 +159,8 @@ function drawDoor(ctx: CanvasRenderingContext2D, wall: WallSide, slot: number, w
 }
 
 const STUB_H = 0.3;
+// Height of the middle of a piece of wall art.
+export const ART_Z = 2.08;
 
 // The front and right walls are cut down so you can see in, like a dollhouse.
 function drawStubs(ctx: CanvasRenderingContext2D, d: Design, wallF: Finish) {
@@ -535,6 +538,17 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   drawBacksplash(ctx, d);
   for (const w of d.windows) if (w.wall === 'back' || w.wall === 'left') drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
   for (const x of d.doors) if (x.wall === 'back' || x.wall === 'left') drawDoor(ctx, x.wall, x.slot, wallF);
+  // Wall art hangs at eye level on whichever walls are showing.
+  for (const a of s.design.art) {
+    const side = wallSpotToView(v, a.wall, a.slot + 0.5).wall;
+    if (side !== 'back' && side !== 'left') continue;
+    onWallSlot(ctx, P, a.wall, a.slot, ART_Z, () => {
+      // The left wall sits in shade, so what hangs on it is a touch dimmer.
+      if (side === 'left') ctx.filter = 'brightness(0.9)';
+      ctx.scale(1.15, 1.15);
+      drawArt(ctx, a.id);
+    });
+  }
   if (o.hoverWall) {
     const { wall, slot } = o.hoverWall;
     poly(ctx, [wallPt(wall, slot + 0.05, 0.2), wallPt(wall, slot + 0.95, 0.2), wallPt(wall, slot + 0.95, WALL_H - 0.15), wallPt(wall, slot + 0.05, WALL_H - 0.15)], 'rgba(255,200,90,0.18)', 'rgba(230,160,50,0.9)', 2);

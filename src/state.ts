@@ -1,5 +1,6 @@
 // Game state and the rules that act on it. No DOM in here, so it is easy to test.
 import {
+  artById,
   DEMO_COST,
   DOOR_ITEMS,
   KITCHEN_DOORS,
@@ -43,6 +44,12 @@ export interface Door {
   slot: number;
 }
 
+export interface WallArt {
+  wall: WallSide;
+  slot: number;
+  id: string;
+}
+
 export interface Design {
   floor: string;
   wall: string;
@@ -52,6 +59,7 @@ export interface Design {
   lighting: string;
   windows: WindowSlot[];
   doors: Door[];
+  art: WallArt[];
   items: Placed[];
 }
 
@@ -128,6 +136,7 @@ export function newGame(scenarioId: string, mode: Mode, inspect: boolean, rng: R
       backsplash: 'bs-none',
       windows: OLD_WINDOWS.map((w) => ({ ...w, finish: sc.start.window })),
       doors: KITCHEN_DOORS.map((d) => ({ ...d })),
+      art: [],
       items: OLD_LAYOUT.map((p) => ({ uid: uid++, ...p })),
     },
     buildProgress: 0,
@@ -335,6 +344,10 @@ export function designCost(d: Design): DesignCost {
     const f = finishById(w.finish);
     if (!f.old) lines.push({ label: `${f.name} window`, materials: f.cost, labor: f.labor });
   }
+  for (const a of d.art) {
+    const def = artById(a.id);
+    lines.push({ label: def.name, materials: def.cost, labor: 0 });
+  }
   for (const p of d.items) {
     const def = itemById(p.id);
     if (def.cost > 0 || def.labor > 0) lines.push({ label: def.name, materials: def.cost, labor: def.labor });
@@ -450,10 +463,10 @@ export function rate(s: GameState): Rating {
     good.push('Somewhere to sit and have coffee.');
   } else tips.push('Add a chair or stools.');
 
-  if (has((k) => k.kind === 'decor')) {
+  if (has((k) => k.kind === 'decor') || d.art.length > 0) {
     pts += 1;
-    good.push('Nice finishing touches.');
-  } else tips.push('A rug or cart adds personality.');
+    good.push(d.art.length > 0 ? 'Something on the walls makes it feel lived in.' : 'Nice finishing touches.');
+  } else tips.push('A rug, a cart or some wall art adds personality.');
 
   const tones = [d.floor, d.wall, d.cabinet, d.counter, d.backsplash].map((id) => finishById(id).tone).filter((t) => t !== 'neutral');
   const clash = tones.includes('warm') && tones.includes('cool');
@@ -543,6 +556,8 @@ export function load(): GameState | undefined {
     // Saves from before backsplashes existed.
     s.design.backsplash ??= 'bs-none';
     s.design.doors ??= KITCHEN_DOORS.map((d) => ({ ...d }));
+    // Saves from before wall art existed.
+    s.design.art ??= [];
     return s;
   } catch {
     return undefined;

@@ -251,3 +251,18 @@ export function shadeWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallS
 // ---- Age ----
 
 export const grime = (w: number, h: number, kind: GrimeKind, seed: number) => cached(`grime:${kind}:${w}:${h}:${seed}`, () => grimeLayer(w, h, kind, seed));
+
+// ---- Wall art ----
+
+// Draw in a wall slot's own frame, centred `z` units up the wall, the right way round
+// as seen from inside the room (so nothing hangs mirrored).
+export function onWallSlot(ctx: CanvasRenderingContext2D, P: Project, wall: WallSide, slot: number, z: number, fn: () => void) {
+  // Seen from inside, distance along the back and right walls runs left to right.
+  const ltr = wall === 'back' || wall === 'right';
+  const a = wallXY(wall, ltr ? slot : slot + 1);
+  const b = wallXY(wall, ltr ? slot + 1 : slot);
+  onPlane(ctx, P(a[0], a[1], z), P(b[0], b[1], z), P(a[0], a[1], z - 1), () => {
+    ctx.translate(PX / 2, 0);
+    fn();
+  });
+}

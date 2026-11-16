@@ -128,5 +128,6 @@ export function designToView(v: View, d: Design): Design {
     items: d.items.map((p) => placedToView(v, p)),
     windows: d.windows.map(wall),
     doors: d.doors.map(wall),
+    art: d.art.map(wall),
   };
 }
