@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEMO_COST, INSPECTION_COST, LABOR_RATE, ROOM_D, ROOM_W, SCENARIOS, STARTER_LAYOUT, issueById, itemById } from '../src/data';
+import { DEMO_COST, INSPECTION_COST, LABOR_RATE, ROOM_D, ROOM_W, SCENARIOS, STARTER_LAYOUT, issueById, itemById, scenarioById } from '../src/data';
 import {
   backToDesign,
   buildDays,
@@ -243,6 +243,50 @@ describe('the beach shack', () => {
       expect(s.issues.find((i) => i.id === id)!.status).toBe('found');
       resolveIssue(s, id, 0);
       expect(s.issues.find((i) => i.id === id)!.status).toBe('fixed');
+    }
+  });
+});
+
+describe('the mountain cabin', () => {
+  it('always has the burst pipe', () => {
+    const s = newGame('mountain-cabin', 'budget', false, never);
+    expect(s.issues.filter((i) => i.status === 'hidden').map((i) => i.id)).toContain('burst-pipe');
+  });
+
+  it('reveals the winter damage at the right moment', () => {
+    const s = newGame('mountain-cabin', 'budget', false, always);
+    expect(ripFloor(s).map((i) => i.id)).toEqual(['burst-pipe', 'dry-rot']);
+    expect(stripWalls(s).map((i) => i.id)).toEqual(['chimney-creosote', 'mold']);
+    // The mice only show up when the crew is in the walls.
+    expect(s.issues.find((i) => i.id === 'mice-in-walls')!.status).toBe('hidden');
+  });
+
+  it('is winnable when every issue is fixed properly', () => {
+    const s = newGame('mountain-cabin', 'budget', true, always);
+    clearRoom(s);
+    for (const i of [...s.issues]) {
+      if (i.status !== 'found') continue;
+      resolveIssue(s, i.id, 0);
+    }
+    niceKitchen(s);
+    startBuild(s);
+    for (let guard = 0; guard < 50 && !buildDone(s); guard++) {
+      const hit = buildTick(s);
+      if (hit) resolveIssue(s, hit.id, 0);
+    }
+    expect(buildDone(s)).toBe(true);
+    const res = finishRoom(s);
+    expect(s.budget - s.spent).toBeGreaterThan(0);
+    expect(res.finishedDay).toBeLessThanOrEqual(scenarioById('mountain-cabin').targetDay);
+    expect(res.coins).toBeGreaterThan(0);
+  });
+
+  it('offers a cheaper patch gamble on every new issue', () => {
+    for (const id of ['burst-pipe', 'chimney-creosote', 'mice-in-walls']) {
+      const [proper, patch] = issueById(id).options;
+      expect(patch.patch).toBe(true);
+      expect(patch.cost).toBeLessThan(proper.cost);
+      expect(patch.risk ?? 0).toBeGreaterThan(0);
     }
   });
 });

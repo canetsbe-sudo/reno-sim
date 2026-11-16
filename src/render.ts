@@ -470,12 +470,20 @@ const WALL_CLUES: Record<string, { wall: WallSide; at: number; h: number; color:
   'peeling-paint': { wall: 'back', at: 2.4, h: 1.4, color: 'rgba(248,244,232,0.45)' },
   // Low on the wall, under the sill, where rust rings actually form.
   'salt-rust': { wall: 'left', at: 4.2, h: 0.65, color: 'rgba(160,75,35,0.3)' },
+  // Soot from the choked stove flue.
+  'chimney-creosote': { wall: 'back', at: 0.7, h: 2.1, color: 'rgba(25,22,25,0.4)' },
+  // Frost where the frozen supply line weeps through.
+  'burst-pipe': { wall: 'back', at: 2.5, h: 1.5, color: 'rgba(170,205,235,0.35)' },
+  // A greasy smudge along the baseboard where the mice run.
+  'mice-in-walls': { wall: 'left', at: 2.8, h: 0.45, color: 'rgba(70,55,45,0.5)' },
 };
 
 const FLOOR_MARKS: Record<string, { at: [number, number]; color: string; stroke: string }> = {
   'dry-rot': { at: [2.3, 1.2], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
   termites: { at: [5.5, 3.6], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
   'rusty-water-line': { at: [4.6, 2.3], color: 'rgba(130,60,30,0.4)', stroke: 'rgba(130,60,30,0.65)' },
+  // A cold puddle stain on the subfloor near the sink.
+  'burst-pipe': { at: [3.6, 2.6], color: 'rgba(150,190,220,0.5)', stroke: 'rgba(120,170,210,0.75)' },
 };
 
 export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneOpts = {}) {

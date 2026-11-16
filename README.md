@@ -19,7 +19,7 @@ The kitchen, end to end:
 4. **Build**: every choice costs materials plus crew days. The crew may call with surprises.
 5. **Reveal**: before/after slider, cozy rating, and coins.
 
-Five starting scenarios (Grandma's house, Neglected fixer, Mid-century gem, Coastal style challenge, Beach shack) and two modes (Budget and Freedom).
+Six starting scenarios (Grandma's house, Neglected fixer, Mid-century gem, Coastal style challenge, Beach shack, Mountain cabin) and two modes (Budget and Freedom).
 
 Controls: click to place, `R` to rotate (arrows show which way the front faces), `Q`/`E` or the ⟲ ⟳ buttons to turn the room and build against any wall, `Delete` to remove, `Esc` to stop placing, `Ctrl+Z` to undo.
 
