@@ -156,6 +156,8 @@ export const JUNK: ItemDef[] = [
   { id: 'junk-bags', name: 'Trash bags', kind: 'junk', w: 1, d: 1, h: 0.6, top: '#2f3135', side: '#24262a', cost: 0, labor: 0 },
   { id: 'junk-tv', name: 'Old tube TV', kind: 'junk', w: 1, d: 1, h: 0.8, top: '#4d4a46', side: '#3a3835', cost: 0, labor: 0 },
   { id: 'junk-paint', name: 'Dried-out paint cans', kind: 'junk', w: 1, d: 1, h: 0.4, top: '#b8c4cc', side: '#8f9ba3', cost: 0, labor: 0 },
+  { id: 'junk-net', name: 'Tangled fishing net', kind: 'junk', w: 1, d: 1, h: 0.5, top: '#8fb6ae', side: '#6f938c', cost: 0, labor: 0 },
+  { id: 'junk-driftwood', name: 'Sea-bleached driftwood', kind: 'junk', w: 1, d: 1, h: 0.6, top: '#cbbda6', side: '#a89a83', cost: 0, labor: 0 },
 ];
 
 export const itemById = (id: string): ItemDef => {
@@ -223,6 +225,17 @@ export const ISSUES: IssueDef[] = [
     ],
   },
   {
+    id: 'rusty-water-line',
+    name: 'Rusted water line',
+    trigger: 'floor',
+    found: 'The supply line under the floor is rusted through where it crosses a joist, and it has been weeping for years.',
+    hint: 'The water runs faintly brown, and the joists are streaked with rust.',
+    options: [
+      { label: 'Run new supply and drain lines', cost: 1400, days: 2 },
+      { label: 'Clamp and seal the worst joint', cost: 300, days: 1, patch: true, risk: 0.55 },
+    ],
+  },
+  {
     id: 'water-damage',
     name: 'Water damage',
     trigger: 'walls',
@@ -253,6 +266,28 @@ export const ISSUES: IssueDef[] = [
     options: [
       { label: 'Remediate and add ventilation', cost: 1200, days: 2 },
       { label: 'Bleach it and hope', cost: 150, days: 1, patch: true, risk: 0.65 },
+    ],
+  },
+  {
+    id: 'peeling-paint',
+    name: 'Peeling paint',
+    trigger: 'walls',
+    found: 'A dozen coats of paint, blistered and flaking. Scraping it goes down to bare plaster.',
+    hint: 'The paint lifts when you press a fingernail into it.',
+    options: [
+      { label: 'Strip, scrape, prime, and repaint', cost: 900, days: 2 },
+      { label: 'Skim it and paint over the top', cost: 250, days: 1, patch: true, risk: 0.5 },
+    ],
+  },
+  {
+    id: 'salt-rust',
+    name: 'Salt-air rust',
+    trigger: 'walls',
+    found: 'Every bracket, hinge, and the old sink drain are rusted orange. Years of sea air did that.',
+    hint: 'Rust rings stain the wall under the window.',
+    options: [
+      { label: 'Fit corrosion-resistant hardware', cost: 850, days: 1 },
+      { label: 'Wire brush it and paint over the rust', cost: 200, days: 1, patch: true, risk: 0.55 },
     ],
   },
   {
@@ -379,6 +414,30 @@ export const SCENARIOS: Scenario[] = [
       { id: 'junk-boxes', x: 3, y: 3 },
       { id: 'junk-bags', x: 5, y: 4 },
       { id: 'junk-armchair', x: 6, y: 2 },
+    ],
+  },
+  {
+    id: 'beach-shack',
+    name: 'Beach shack',
+    blurb: 'Salt air ruined the paint and rusted the metalwork. Dry rot where the sea got in.',
+    budget: 26000,
+    targetDay: 32,
+    style: 'coastal',
+    styleLabel: 'Coastal',
+    start: { floor: 'floor-old-lino', wall: 'wall-old-grime', cabinet: 'cab-old-laminate', counter: 'ctr-old-formica', window: 'win-old-alum', lighting: 'light-old-flicker' },
+    issuePool: [
+      { id: 'peeling-paint', chance: 1 },
+      { id: 'salt-rust', chance: 0.9 },
+      { id: 'dry-rot', chance: 0.9 },
+      { id: 'rusty-water-line', chance: 0.75 },
+      { id: 'mold', chance: 0.55 },
+      { id: 'ceiling-leak', chance: 0.45 },
+    ],
+    junk: [
+      { id: 'junk-paint', x: 5, y: 4 },
+      { id: 'junk-net', x: 3, y: 2 },
+      { id: 'junk-driftwood', x: 6, y: 3 },
+      { id: 'junk-boxes', x: 2, y: 4 },
     ],
   },
 ];

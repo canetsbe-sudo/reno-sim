@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEMO_COST, INSPECTION_COST, LABOR_RATE, STARTER_LAYOUT } from '../src/data';
+import { DEMO_COST, INSPECTION_COST, LABOR_RATE, ROOM_D, ROOM_W, SCENARIOS, STARTER_LAYOUT, issueById, itemById } from '../src/data';
 import {
   backToDesign,
   buildDays,
@@ -221,5 +221,55 @@ describe('build', () => {
     backToDesign(s);
     expect(s.spent).toBe(spent);
     expect(s.stage).toBe('design');
+  });
+});
+
+describe('the beach shack', () => {
+  it('always has the paint trouble', () => {
+    const s = newGame('beach-shack', 'budget', false, never);
+    expect(s.issues.filter((i) => i.status === 'hidden').map((i) => i.id)).toContain('peeling-paint');
+  });
+
+  it('surfaces paint, rust, and dry rot at the right moment', () => {
+    const s = newGame('beach-shack', 'budget', false, always);
+    expect(ripFloor(s).map((i) => i.id)).toEqual(['dry-rot', 'rusty-water-line']);
+    expect(stripWalls(s).map((i) => i.id)).toEqual(['peeling-paint', 'salt-rust', 'mold']);
+  });
+
+  it('paint, rust, and dry rot can all be fixed properly', () => {
+    const s = newGame('beach-shack', 'budget', false, always);
+    clearRoom(s);
+    for (const id of ['peeling-paint', 'salt-rust', 'dry-rot']) {
+      expect(s.issues.find((i) => i.id === id)!.status).toBe('found');
+      resolveIssue(s, id, 0);
+      expect(s.issues.find((i) => i.id === id)!.status).toBe('fixed');
+    }
+  });
+});
+
+describe('scenario data', () => {
+  it('pools only real issues that surface during the work', () => {
+    for (const sc of SCENARIOS) {
+      const ids = sc.issuePool.map((p) => p.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const p of sc.issuePool) {
+        // A start-trigger issue is already in every house, so pooling one would double it up.
+        expect(issueById(p.id).trigger).not.toBe('start');
+        expect(p.chance).toBeGreaterThan(0);
+        expect(p.chance).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('hauls only real junk that sits inside the room', () => {
+    for (const sc of SCENARIOS) {
+      for (const j of sc.junk) {
+        expect(itemById(j.id).kind).toBe('junk');
+        expect(j.x).toBeGreaterThanOrEqual(0);
+        expect(j.y).toBeGreaterThanOrEqual(0);
+        expect(j.x).toBeLessThan(ROOM_W);
+        expect(j.y).toBeLessThan(ROOM_D);
+      }
+    }
   });
 });
