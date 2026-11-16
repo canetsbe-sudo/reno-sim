@@ -2,10 +2,11 @@
 // finish, maps them onto floor and wall planes, and paints light and shadow in room
 // (world) space so everything turns with the camera.
 import { ROOM_D, ROOM_W, type Finish, type WallSide } from '../data';
+import { dryRot, oldWiring, peelingPaint, rustyLine, saltRust, termites, waterStain } from './damage';
 import { checkerTile, oldCarpet, oldLino, slate, subfloor, terracotta } from './floors';
 import { hexRgb } from './noise';
 import { drywall, floralPaper, shiplap, stripePaper } from './walls';
-import { PX, grimeLayer, paintMold, paintedWall, woodPlanks, type GrimeKind } from './surfaces';
+import { PX, grimeLayer, makeCanvas, paintMold, paintedWall, woodPlanks, type GrimeKind } from './surfaces';
 
 export type Pt = [number, number];
 // Room (world) point to screen, for the current camera view.
@@ -49,7 +50,7 @@ export function onWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallSide
 
 // ---- Floor ----
 
-export function floorTexture(f: Finish): HTMLCanvasElement {
+function floorBase(f: Finish): HTMLCanvasElement {
   return cached(`floor:${f.id}`, () => {
     const accent = f.accent ?? f.color;
     switch (f.id) {
@@ -76,33 +77,84 @@ export function floorTexture(f: Finish): HTMLCanvasElement {
   });
 }
 
-// ---- Walls ----
+// How far each kind of trouble has got, by issue id: 1 is a first hint, 2 is the full
+// thing. Anything missing is not showing.
+export type Damage = Record<string, number>;
 
-// How far the mold has got: 0 none, 1 a first hint, 2 the full colony.
-export type MoldLevel = 0 | 1 | 2;
-const MOLD = { wall: 'left' as WallSide, u: 1.45, z: 1.75 };
+const copy = (src: HTMLCanvasElement) => {
+  const c = makeCanvas(src.width, src.height);
+  c.getContext('2d')!.drawImage(src, 0, 0);
+  return c;
+};
+
+const key = (d: Damage, ids: string[]) => ids.map((id) => d[id] ?? 0).join('');
+
+// Where trouble under the floor shows, as [x, y, width, depth] in room tiles.
+const FLOOR_SPOTS: Record<string, [number, number, number, number]> = {
+  'dry-rot': [2.3, 1.2, 1.4, 1],
+  termites: [5.5, 3.6, 1.4, 1],
+  'rusty-water-line': [4.6, 2.3, 1.4, 1],
+};
+
+export function floorTexture(f: Finish, dmg: Damage = {}): HTMLCanvasElement {
+  const ids = Object.keys(FLOOR_SPOTS);
+  const k = key(dmg, ids);
+  if (!/[^0]/.test(k)) return floorBase(f);
+  return cached(`floor:${f.id}:${k}`, () => {
+    const c = copy(floorBase(f));
+    const at = (id: string) => FLOOR_SPOTS[id].map((n) => n * PX) as [number, number, number, number];
+    if (dmg['dry-rot']) dryRot(c, ...at('dry-rot'));
+    if (dmg.termites) termites(c, ...at('termites'));
+    if (dmg['rusty-water-line']) rustyLine(c, ...at('rusty-water-line'));
+    return c;
+  });
+}
+
+// ---- Walls ----
 
 const WALL_SEED: Record<WallSide, number> = { back: 31, left: 62, front: 93, right: 124 };
 
 function wallBase(f: Finish, wall: WallSide, wallH: number): HTMLCanvasElement {
-  const len = wallLen(wall);
-  const accent = f.accent ?? f.color;
-  if (f.id === 'wall-drywall') return drywall(len, wallH, f.color);
-  if (f.pattern === 'stripes') return stripePaper(len, wallH, f.color, accent);
-  if (f.pattern === 'planks') return shiplap(len, wallH, f.color, accent);
-  if (f.pattern === 'floral') return floralPaper(len, wallH, f.color, accent, WALL_SEED[wall]);
-  return paintedWall(len, wallH, { color: f.color, grime: f.old ? 0.8 : 0, seed: WALL_SEED[wall] });
+  return cached(`wall:${f.id}:${wall}`, () => {
+    const len = wallLen(wall);
+    const accent = f.accent ?? f.color;
+    if (f.id === 'wall-drywall') return drywall(len, wallH, f.color);
+    if (f.pattern === 'stripes') return stripePaper(len, wallH, f.color, accent);
+    if (f.pattern === 'planks') return shiplap(len, wallH, f.color, accent);
+    if (f.pattern === 'floral') return floralPaper(len, wallH, f.color, accent, WALL_SEED[wall]);
+    return paintedWall(len, wallH, { color: f.color, grime: f.old ? 0.8 : 0, seed: WALL_SEED[wall] });
+  });
 }
 
-export function wallTexture(f: Finish, wall: WallSide, wallH: number, mold: MoldLevel): HTMLCanvasElement {
-  const m = wall === MOLD.wall ? mold : 0;
-  return cached(`wall:${f.id}:${wall}:${m}`, () => {
-    const c = wallBase(f, wall, wallH);
-    if (m === 1) paintMold(c, MOLD.u * PX, (wallH - MOLD.z - 0.35) * PX, 0.26 * PX, 5);
-    if (m === 2) {
-      paintMold(c, MOLD.u * PX, (wallH - MOLD.z) * PX, 0.62 * PX, 5);
-      paintMold(c, (MOLD.u + 0.75) * PX, (wallH - MOLD.z + 0.55) * PX, 0.34 * PX, 8);
+// Which wall each kind of trouble shows on, how far along it, and how high.
+const WALL_SPOTS: Record<string, { wall: WallSide; u: number; z: number }> = {
+  'water-damage': { wall: 'back', u: 5.5, z: 2.3 },
+  mold: { wall: 'left', u: 1.45, z: 1.75 },
+  'peeling-paint': { wall: 'back', u: 2.4, z: 1.45 },
+  // Low on the wall, under the sill, where rust rings actually form.
+  'salt-rust': { wall: 'left', u: 4.5, z: 1.05 },
+  'old-wiring': { wall: 'back', u: 7.3, z: 1.3 },
+};
+
+export function wallTexture(f: Finish, wall: WallSide, wallH: number, dmg: Damage = {}): HTMLCanvasElement {
+  const ids = Object.keys(WALL_SPOTS).filter((id) => WALL_SPOTS[id].wall === wall);
+  const k = key(dmg, ids);
+  if (!/[^0]/.test(k)) return wallBase(f, wall, wallH);
+  return cached(`wall:${f.id}:${wall}:${k}`, () => {
+    const c = copy(wallBase(f, wall, wallH));
+    const lvl = (id: string) => (WALL_SPOTS[id].wall === wall ? (dmg[id] ?? 0) : 0);
+    const x = (id: string) => WALL_SPOTS[id].u * PX;
+    const y = (id: string) => (wallH - WALL_SPOTS[id].z) * PX;
+    if (lvl('water-damage')) waterStain(c, x('water-damage'), y('water-damage'), (lvl('water-damage') > 1 ? 0.6 : 0.34) * PX, lvl('water-damage') > 1);
+    if (lvl('peeling-paint')) peelingPaint(c, x('peeling-paint'), y('peeling-paint'), (lvl('peeling-paint') > 1 ? 0.75 : 0.4) * PX, lvl('peeling-paint') > 1);
+    if (lvl('salt-rust')) saltRust(c, x('salt-rust'), y('salt-rust'), 0.34 * PX, lvl('salt-rust') > 1);
+    if (lvl('mold') === 1) paintMold(c, x('mold'), y('mold') - 0.35 * PX, 0.26 * PX, 5);
+    if (lvl('mold') > 1) {
+      paintMold(c, x('mold'), y('mold'), 0.62 * PX, 5);
+      paintMold(c, x('mold') + 0.75 * PX, y('mold') + 0.55 * PX, 0.34 * PX, 8);
     }
+    // Wiring only shows once the wall has been opened up.
+    if (lvl('old-wiring') > 1) oldWiring(c, x('old-wiring'), y('old-wiring'), 0.55 * PX, 0.7 * PX);
     return c;
   });
 }
