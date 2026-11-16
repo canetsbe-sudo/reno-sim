@@ -11,15 +11,19 @@ const MARGIN = 24;
 
 export const CANVAS_W = (ROOM_W + ROOM_D) * (TW / 2) + MARGIN * 2;
 export const CANVAS_H = (ROOM_W + ROOM_D) * (TH / 2) + WALL_H * ZS + MARGIN * 2 + 12;
+// Screen x of the room's back corner for a view. Picking computes this from the view it is
+// given rather than reading OX, which only changes when a frame is drawn.
+const originX = (v: View) => viewDims(v).d * (TW / 2) + MARGIN;
+
 // Room size and origin for the current camera view (width and depth swap on odd turns).
 let RW = ROOM_W;
 let RD = ROOM_D;
-let OX = RD * (TW / 2) + MARGIN;
+let OX = originX(0);
 function setView(v: View) {
   const dims = viewDims(v);
   RW = dims.w;
   RD = dims.d;
-  OX = RD * (TW / 2) + MARGIN;
+  OX = originX(v);
 }
 const OY = WALL_H * ZS + MARGIN + 6;
 
@@ -27,8 +31,13 @@ type Pt = [number, number];
 
 export const iso = (x: number, y: number, z = 0): Pt => [OX + (x - y) * (TW / 2), OY + (x + y) * (TH / 2) - z * ZS];
 
-// Screen point to floor tile.
-export function pickTile(sx: number, sy: number): { x: number; y: number } | undefined {
+// A view-space floor point on screen, for a given camera view.
+export const screenPoint = (v: View, x: number, y: number, z = 0): Pt => [originX(v) + (x - y) * (TW / 2), OY + (x + y) * (TH / 2) - z * ZS];
+
+// Screen point to floor tile, in view space.
+export function pickTile(v: View, sx: number, sy: number): { x: number; y: number } | undefined {
+  const { w: RW, d: RD } = viewDims(v);
+  const OX = originX(v);
   const a = (sx - OX) / (TW / 2);
   const b = (sy - OY) / (TH / 2);
   const x = Math.floor((a + b) / 2);
@@ -38,7 +47,9 @@ export function pickTile(sx: number, sy: number): { x: number; y: number } | und
 }
 
 // Screen point to a slot on one of the two full walls, in view space.
-export function pickWall(sx: number, sy: number): { wall: WallSide; slot: number } | undefined {
+export function pickWall(v: View, sx: number, sy: number): { wall: WallSide; slot: number } | undefined {
+  const { w: RW, d: RD } = viewDims(v);
+  const OX = originX(v);
   const bx = (sx - OX) / (TW / 2);
   const bz = (bx * (TH / 2) - (sy - OY)) / ZS;
   if (bx > 0 && bx < RW && bz > 0 && bz < WALL_H) return { wall: 'back', slot: Math.floor(bx) };
