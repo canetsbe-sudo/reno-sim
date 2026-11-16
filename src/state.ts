@@ -491,7 +491,8 @@ export function rate(s: GameState): Rating {
 
   const sc = scenarioById(s.scenario);
   if (sc.style) {
-    const picks = [d.floor, d.wall, d.cabinet, d.counter, d.backsplash, ...d.windows.map((w) => w.finish)];
+    // Every finish the design panel tags with the brief's style counts, lighting included.
+    const picks = [d.floor, d.wall, d.cabinet, d.counter, d.backsplash, d.lighting, ...d.windows.map((w) => w.finish)];
     const match = picks.filter((id) => finishById(id).styles.includes(sc.style!)).length;
     if (match >= 4) {
       pts += 1.5;
