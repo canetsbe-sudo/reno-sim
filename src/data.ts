@@ -93,6 +93,34 @@ export const finishById = (id: string): Finish => {
   return f;
 };
 
+// Things that hang on a wall: one per wall slot, never where a window or door is.
+export interface ArtDef {
+  id: string;
+  name: string;
+  cost: number;
+  styles: Style[];
+  blurb?: string;
+}
+
+export const WALL_ART: ArtDef[] = [
+  { id: 'art-landscape', name: 'Landscape painting', cost: 120, styles: ['classic', 'farmhouse'] },
+  { id: 'art-abstract', name: 'Abstract print', cost: 90, styles: ['modern', 'midcentury'] },
+  { id: 'art-botanical', name: 'Botanical prints', cost: 80, styles: ['farmhouse', 'classic', 'coastal'], blurb: 'A matching pair.' },
+  { id: 'art-mirror', name: 'Round brass mirror', cost: 140, styles: ['modern', 'classic'] },
+  { id: 'art-sunburst', name: 'Sunburst mirror', cost: 130, styles: ['midcentury'] },
+  { id: 'art-clock', name: 'Kitchen clock', cost: 60, styles: ['classic', 'midcentury', 'modern'] },
+  { id: 'art-shelf', name: 'Floating shelf', cost: 110, styles: ['modern', 'farmhouse'], blurb: 'Books, a jar and a trailing plant.' },
+  { id: 'art-plates', name: 'Painted plates', cost: 70, styles: ['coastal', 'farmhouse'] },
+  { id: 'art-macrame', name: 'Macrame hanging', cost: 65, styles: ['coastal', 'midcentury'] },
+  { id: 'art-potrack', name: 'Copper pot rack', cost: 150, styles: ['farmhouse', 'classic'], blurb: 'Pans within reach.' },
+];
+
+export const artById = (id: string): ArtDef => {
+  const a = WALL_ART.find((x) => x.id === id);
+  if (!a) throw new Error(`Unknown wall art ${id}`);
+  return a;
+};
+
 export type ItemKind =
   | 'cabinet'
   | 'appliance'

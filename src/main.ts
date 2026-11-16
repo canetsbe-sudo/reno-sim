@@ -7,6 +7,7 @@ import {
   LABOR_RATE,
   SCENARIOS,
   STARTER_LAYOUT,
+  WALL_ART,
   finishById,
   issueById,
   itemById,
@@ -69,13 +70,14 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 let state: GameState | undefined;
 
 // UI-only state that is not saved.
-type DesignTab = FinishCategory | 'furniture' | 'upgrades';
+type DesignTab = FinishCategory | 'furniture' | 'upgrades' | 'art';
 const ui = {
   tab: 'floor' as DesignTab,
   placing: undefined as string | undefined,
   // Facing while placing, as seen on screen (0 faces the camera).
   placingRot: 0 as Rot,
   windowStyle: 'win-classic',
+  artPick: WALL_ART[0].id,
   selected: undefined as number | undefined,
   hoverTile: undefined as { x: number; y: number } | undefined,
   hoverWall: undefined as { wall: WallSide; slot: number } | undefined,
@@ -112,7 +114,7 @@ function draw() {
         const p: Placed = { uid: -1, ...placedFromView(ui.view, ui.placing, ui.hoverTile.x, ui.hoverTile.y, rotToWorld(ui.view, ui.placingRot)) };
         o.ghost = { p, valid: fits(state.design.items, p, undefined, state.design.doors) };
       }
-      if (ui.tab === 'window' && ui.hoverWall) o.hoverWall = ui.hoverWall;
+      if ((ui.tab === 'window' || ui.tab === 'art') && ui.hoverWall) o.hoverWall = ui.hoverWall;
     }
     if (state.stage === 'clear' && ui.hoverTile) {
       const t = worldTile(ui.hoverTile);
@@ -168,9 +170,10 @@ canvas.addEventListener('pointerdown', (e) => {
     clickJunk(t.x, t.y, e);
   }
   if (state.stage === 'design') {
-    if (ui.tab === 'window' && wall) {
+    if ((ui.tab === 'window' || ui.tab === 'art') && wall) {
       const w = wallFromView(ui.view, wall.wall, wall.slot);
-      clickWindow(w.wall, w.slot);
+      if (ui.tab === 'art') clickArt(w.wall, w.slot);
+      else clickWindow(w.wall, w.slot);
     } else if (tile) clickDesignTile(tile.x, tile.y);
   }
 });
@@ -356,6 +359,7 @@ const TABS: { id: DesignTab; label: string }[] = [
   { id: 'counter', label: 'Counters' },
   { id: 'backsplash', label: 'Backsplash' },
   { id: 'furniture', label: 'Furniture' },
+  { id: 'art', label: 'Wall art' },
   { id: 'upgrades', label: 'Upgrades' },
   { id: 'lighting', label: 'Lighting' },
 ];
@@ -375,7 +379,15 @@ function renderDesign(s: GameState) {
   const sc = scenarioById(s.scenario);
   const budget = isBudget(s);
   let body = '';
-  if (ui.tab === 'furniture' || ui.tab === 'upgrades') {
+  if (ui.tab === 'art') {
+    body = `<p class="lead">Pick a piece, then click a spot on either wall to hang it. Click it again to take it down.</p>
+      <div class="item-list">${WALL_ART.map((a) => {
+        const styleTag = sc.style && a.styles.includes(sc.style) ? `<span class="style-tag">${sc.styleLabel}</span>` : '';
+        return `<button class="item-btn ${ui.artPick === a.id ? 'on' : ''}" data-act="art" data-art="${a.id}">
+          <span><b>${esc(a.name)}</b>${styleTag}${a.blurb ? `<small>${esc(a.blurb)}</small>` : ''}</span>
+          <small>${budget ? money(a.cost) : ''}</small></button>`;
+      }).join('')}</div>`;
+  } else if (ui.tab === 'furniture' || ui.tab === 'upgrades') {
     const list = ITEMS.filter((it) => (ui.tab === 'upgrades' ? it.kind === 'upgrade' : it.kind !== 'upgrade'));
     body = `<div class="item-list">${list
       .map((it) => {
@@ -420,6 +432,7 @@ function renderDesign(s: GameState) {
     : `<div class="costs"><div class="row"><span>Build time</span><span>${c.laborDays} days</span></div></div>`;
 
   if (ui.placing) hint.textContent = 'Click to place · R to rotate · Esc to stop · Q/E to turn the room';
+  else if (ui.tab === 'art') hint.textContent = 'Click a wall to hang it · Q/E to turn the room to reach the other walls';
   else if (ui.tab === 'window') hint.textContent = 'Click a wall to place a window · Q/E to turn the room to reach the other walls';
   else if (ui.selected !== undefined) hint.textContent = 'Delete to remove · R to rotate · Esc to deselect';
   else hint.textContent = 'Click an item in the room to select it';
@@ -504,6 +517,9 @@ panel.addEventListener('click', (e) => {
       break;
     case 'finish':
       applyFinish(b.dataset.finish!);
+      break;
+    case 'art':
+      ui.artPick = b.dataset.art!;
       break;
     case 'place':
       ui.placing = ui.placing === b.dataset.item ? undefined : b.dataset.item;
@@ -631,7 +647,29 @@ function clickWindow(wall: WallSide, slot: number) {
   const at = s.design.windows.findIndex((w) => w.wall === wall && w.slot === slot);
   if (at >= 0 && s.design.windows[at].finish === ui.windowStyle) s.design.windows.splice(at, 1);
   else if (at >= 0) s.design.windows[at].finish = ui.windowStyle;
-  else s.design.windows.push({ wall, slot, finish: ui.windowStyle });
+  else {
+    s.design.windows.push({ wall, slot, finish: ui.windowStyle });
+    // A new window takes the place of anything hanging there.
+    s.design.art = s.design.art.filter((a) => a.wall !== wall || a.slot !== slot);
+  }
+  commit();
+}
+
+function clickArt(wall: WallSide, slot: number) {
+  const s = state!;
+  if (s.design.doors.some((d) => d.wall === wall && d.slot === slot)) {
+    toast("That's a doorway.");
+    return;
+  }
+  if (s.design.windows.some((w) => w.wall === wall && w.slot === slot)) {
+    toast("There's a window there.");
+    return;
+  }
+  pushUndo();
+  const at = s.design.art.findIndex((a) => a.wall === wall && a.slot === slot);
+  if (at >= 0 && s.design.art[at].id === ui.artPick) s.design.art.splice(at, 1);
+  else if (at >= 0) s.design.art[at].id = ui.artPick;
+  else s.design.art.push({ wall, slot, id: ui.artPick });
   commit();
 }
 
