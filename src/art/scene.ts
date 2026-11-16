@@ -2,10 +2,12 @@
 // finish, maps them onto floor and wall planes, and paints light and shadow in room
 // (world) space so everything turns with the camera.
 import { ROOM_D, ROOM_W, type Finish, type WallSide } from '../data';
+import { dryRot, oldWiring, peelingPaint, rustyLine, saltRust, termites, waterStain } from './damage';
 import { checkerTile, oldCarpet, oldLino, slate, subfloor, terracotta } from './floors';
 import { hexRgb } from './noise';
 import { drywall, floralPaper, shiplap, stripePaper } from './walls';
-import { PX, grimeLayer, paintMold, paintedWall, woodPlanks, type GrimeKind } from './surfaces';
+import { brushedSteel, butcherBlock, castIron, concrete, enamel, laminate, marble, oldLaminate, paintedPanel, terrazzo, wallTile, woodGrain, type TileKind } from './materials';
+import { PX, grimeLayer, makeCanvas, paintMold, paintedWall, woodPlanks, type GrimeKind } from './surfaces';
 
 export type Pt = [number, number];
 // Room (world) point to screen, for the current camera view.
@@ -20,6 +22,8 @@ function cached(key: string, make: () => HTMLCanvasElement): HTMLCanvasElement {
   }
   return c;
 }
+// For other art modules that paint their own textures.
+export const texture = cached;
 
 const mix = (hex: string, to: number, amt: number) => {
   const [r, g, b] = hexRgb(hex).map((c) => Math.round(c + (to - c) * amt));
@@ -49,7 +53,7 @@ export function onWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallSide
 
 // ---- Floor ----
 
-export function floorTexture(f: Finish): HTMLCanvasElement {
+function floorBase(f: Finish): HTMLCanvasElement {
   return cached(`floor:${f.id}`, () => {
     const accent = f.accent ?? f.color;
     switch (f.id) {
@@ -76,33 +80,84 @@ export function floorTexture(f: Finish): HTMLCanvasElement {
   });
 }
 
-// ---- Walls ----
+// How far each kind of trouble has got, by issue id: 1 is a first hint, 2 is the full
+// thing. Anything missing is not showing.
+export type Damage = Record<string, number>;
 
-// How far the mold has got: 0 none, 1 a first hint, 2 the full colony.
-export type MoldLevel = 0 | 1 | 2;
-const MOLD = { wall: 'left' as WallSide, u: 1.45, z: 1.75 };
+const copy = (src: HTMLCanvasElement) => {
+  const c = makeCanvas(src.width, src.height);
+  c.getContext('2d')!.drawImage(src, 0, 0);
+  return c;
+};
+
+const key = (d: Damage, ids: string[]) => ids.map((id) => d[id] ?? 0).join('');
+
+// Where trouble under the floor shows, as [x, y, width, depth] in room tiles.
+const FLOOR_SPOTS: Record<string, [number, number, number, number]> = {
+  'dry-rot': [2.3, 1.2, 1.4, 1],
+  termites: [5.5, 3.6, 1.4, 1],
+  'rusty-water-line': [4.6, 2.3, 1.4, 1],
+};
+
+export function floorTexture(f: Finish, dmg: Damage = {}): HTMLCanvasElement {
+  const ids = Object.keys(FLOOR_SPOTS);
+  const k = key(dmg, ids);
+  if (!/[^0]/.test(k)) return floorBase(f);
+  return cached(`floor:${f.id}:${k}`, () => {
+    const c = copy(floorBase(f));
+    const at = (id: string) => FLOOR_SPOTS[id].map((n) => n * PX) as [number, number, number, number];
+    if (dmg['dry-rot']) dryRot(c, ...at('dry-rot'));
+    if (dmg.termites) termites(c, ...at('termites'));
+    if (dmg['rusty-water-line']) rustyLine(c, ...at('rusty-water-line'));
+    return c;
+  });
+}
+
+// ---- Walls ----
 
 const WALL_SEED: Record<WallSide, number> = { back: 31, left: 62, front: 93, right: 124 };
 
 function wallBase(f: Finish, wall: WallSide, wallH: number): HTMLCanvasElement {
-  const len = wallLen(wall);
-  const accent = f.accent ?? f.color;
-  if (f.id === 'wall-drywall') return drywall(len, wallH, f.color);
-  if (f.pattern === 'stripes') return stripePaper(len, wallH, f.color, accent);
-  if (f.pattern === 'planks') return shiplap(len, wallH, f.color, accent);
-  if (f.pattern === 'floral') return floralPaper(len, wallH, f.color, accent, WALL_SEED[wall]);
-  return paintedWall(len, wallH, { color: f.color, grime: f.old ? 0.8 : 0, seed: WALL_SEED[wall] });
+  return cached(`wall:${f.id}:${wall}`, () => {
+    const len = wallLen(wall);
+    const accent = f.accent ?? f.color;
+    if (f.id === 'wall-drywall') return drywall(len, wallH, f.color);
+    if (f.pattern === 'stripes') return stripePaper(len, wallH, f.color, accent);
+    if (f.pattern === 'planks') return shiplap(len, wallH, f.color, accent);
+    if (f.pattern === 'floral') return floralPaper(len, wallH, f.color, accent, WALL_SEED[wall]);
+    return paintedWall(len, wallH, { color: f.color, grime: f.old ? 0.8 : 0, seed: WALL_SEED[wall] });
+  });
 }
 
-export function wallTexture(f: Finish, wall: WallSide, wallH: number, mold: MoldLevel): HTMLCanvasElement {
-  const m = wall === MOLD.wall ? mold : 0;
-  return cached(`wall:${f.id}:${wall}:${m}`, () => {
-    const c = wallBase(f, wall, wallH);
-    if (m === 1) paintMold(c, MOLD.u * PX, (wallH - MOLD.z - 0.35) * PX, 0.26 * PX, 5);
-    if (m === 2) {
-      paintMold(c, MOLD.u * PX, (wallH - MOLD.z) * PX, 0.62 * PX, 5);
-      paintMold(c, (MOLD.u + 0.75) * PX, (wallH - MOLD.z + 0.55) * PX, 0.34 * PX, 8);
+// Which wall each kind of trouble shows on, how far along it, and how high.
+const WALL_SPOTS: Record<string, { wall: WallSide; u: number; z: number }> = {
+  'water-damage': { wall: 'back', u: 5.5, z: 2.3 },
+  mold: { wall: 'left', u: 1.45, z: 1.75 },
+  'peeling-paint': { wall: 'back', u: 2.4, z: 1.45 },
+  // Low on the wall, under the sill, where rust rings actually form.
+  'salt-rust': { wall: 'left', u: 4.5, z: 1.05 },
+  'old-wiring': { wall: 'back', u: 7.3, z: 1.3 },
+};
+
+export function wallTexture(f: Finish, wall: WallSide, wallH: number, dmg: Damage = {}): HTMLCanvasElement {
+  const ids = Object.keys(WALL_SPOTS).filter((id) => WALL_SPOTS[id].wall === wall);
+  const k = key(dmg, ids);
+  if (!/[^0]/.test(k)) return wallBase(f, wall, wallH);
+  return cached(`wall:${f.id}:${wall}:${k}`, () => {
+    const c = copy(wallBase(f, wall, wallH));
+    const lvl = (id: string) => (WALL_SPOTS[id].wall === wall ? (dmg[id] ?? 0) : 0);
+    const x = (id: string) => WALL_SPOTS[id].u * PX;
+    const y = (id: string) => (wallH - WALL_SPOTS[id].z) * PX;
+    if (lvl('water-damage')) waterStain(c, x('water-damage'), y('water-damage'), (lvl('water-damage') > 1 ? 0.6 : 0.34) * PX, lvl('water-damage') > 1);
+    if (lvl('peeling-paint')) peelingPaint(c, x('peeling-paint'), y('peeling-paint'), (lvl('peeling-paint') > 1 ? 0.75 : 0.4) * PX, lvl('peeling-paint') > 1);
+    if (lvl('salt-rust')) saltRust(c, x('salt-rust'), y('salt-rust'), 0.34 * PX, lvl('salt-rust') > 1);
+    if (lvl('mold') === 1) paintMold(c, x('mold'), y('mold') - 0.35 * PX, 0.26 * PX, 5);
+    if (lvl('mold') > 1) {
+      paintMold(c, x('mold'), y('mold'), 0.62 * PX, 5);
+      paintMold(c, x('mold') + 0.75 * PX, y('mold') + 0.55 * PX, 0.34 * PX, 8);
     }
+    // Wiring only shows once the wall has been opened up.
+    if (lvl('old-wiring') > 1) oldWiring(c, x('old-wiring'), y('old-wiring'), 0.55 * PX, 0.7 * PX);
     return c;
   });
 }
@@ -112,6 +167,32 @@ export function wallTexture(f: Finish, wall: WallSide, wallH: number, mold: Mold
 // The sun sits behind the back-left corner, so it comes in through back and left windows.
 // A point z units up a wall lands SUN[0] * z across and SUN[1] * z into the room.
 export const SUN: Pt = [0.5, 1.05];
+
+// The sun as it stands for the current lighting mood: lower in the sky reaches further.
+let sun: Pt = SUN;
+
+export interface Mood {
+  sun: string; // r,g,b of direct light
+  power: number; // strength of the sun pools
+  reach: number; // how far the low sun throws light and shadow
+  wash?: string; // colour laid over the whole room
+  lamp: number; // how much lamps and fires add
+  glass: string; // sky seen through the windows
+  tube?: boolean; // a cold ceiling tube instead of anything nice
+}
+
+const MOODS: Record<string, Mood> = {
+  'light-daylight': { sun: '255,246,226', power: 1, reach: 1, lamp: 0.25, glass: '#bfe0f2' },
+  'light-warm': { sun: '255,206,132', power: 1.25, reach: 1.3, wash: 'rgba(255,176,84,0.13)', lamp: 0.6, glass: '#f6dfae' },
+  'light-dusk': { sun: '255,138,84', power: 1.15, reach: 1.9, wash: 'rgba(46,30,84,0.36)', lamp: 1, glass: '#f29a6c' },
+  'light-old-flicker': { sun: '226,236,214', power: 0.45, reach: 1, wash: 'rgba(120,150,96,0.16)', lamp: 0.4, glass: '#b9c8cf', tube: true },
+};
+
+export function setMood(id: string): Mood {
+  const m = MOODS[id] ?? MOODS['light-daylight'];
+  sun = [SUN[0] * m.reach, SUN[1] * m.reach];
+  return m;
+}
 
 export interface Opening {
   wall: WallSide;
@@ -134,8 +215,8 @@ function quad(ctx: CanvasRenderingContext2D, pts: Pt[]) {
 
 // Where a wall point at height z lands on the floor.
 function sunHit(wall: WallSide, u: number, z: number): Pt | undefined {
-  if (wall === 'back') return [u + SUN[0] * z, SUN[1] * z];
-  if (wall === 'left') return [SUN[1] * z, u + SUN[0] * z];
+  if (wall === 'back') return [u + sun[0] * z, sun[1] * z];
+  if (wall === 'left') return [sun[1] * z, u + sun[0] * z];
   return undefined;
 }
 
@@ -167,7 +248,7 @@ export function shadeFloor(ctx: CanvasRenderingContext2D, P: Project, strength =
 }
 
 // Pools of sunlight thrown across the floor by each window, with the muntin's shadow.
-export function sunPools(ctx: CanvasRenderingContext2D, P: Project, openings: Opening[], color = '255,238,200') {
+export function sunPools(ctx: CanvasRenderingContext2D, P: Project, openings: Opening[], color = '255,238,200', power = 1) {
   onFloor(ctx, P, () => {
     ctx.beginPath();
     ctx.rect(0, 0, ROOM_W * PX, ROOM_D * PX);
@@ -182,14 +263,14 @@ export function sunPools(ctx: CanvasRenderingContext2D, P: Project, openings: Op
       // Wide soft bounce first, then the crisp panes.
       ctx.globalCompositeOperation = 'soft-light';
       BLUR(ctx, 16);
-      ctx.fillStyle = `rgba(${color},0.5)`;
+      ctx.fillStyle = `rgba(${color},${Math.min(1, 0.5 * power)})`;
       quad(ctx, pane(o.u0 - 0.2, o.u1 + 0.2, o.z0 - 0.2, o.z1 + 0.3));
       ctx.globalCompositeOperation = 'overlay';
       BLUR(ctx, 1.6);
-      ctx.fillStyle = `rgba(${color},0.5)`;
+      ctx.fillStyle = `rgba(${color},${Math.min(1, 0.5 * power)})`;
       for (const p of panes) quad(ctx, p);
       ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = `rgba(${color},0.2)`;
+      ctx.fillStyle = `rgba(${color},${0.2 * power})`;
       for (const p of panes) quad(ctx, p);
     }
   });
@@ -199,8 +280,8 @@ export function sunPools(ctx: CanvasRenderingContext2D, P: Project, openings: Op
 export function castShadow(ctx: CanvasRenderingContext2D, P: Project, x: number, y: number, w: number, d: number, h: number, alpha = 1) {
   if (h < 0.1) return;
   const len = Math.min(h, 1.6) * 0.55;
-  const sx = SUN[0] * len;
-  const sy = SUN[1] * len;
+  const sx = sun[0] * len;
+  const sy = sun[1] * len;
   onFloor(ctx, P, () => {
     ctx.beginPath();
     ctx.rect(0, 0, ROOM_W * PX, ROOM_D * PX);
@@ -217,7 +298,7 @@ export function castShadow(ctx: CanvasRenderingContext2D, P: Project, x: number,
 
 // Shading on a wall: darker toward the corner, floor and ceiling line, plus the glow of
 // light spilling around each window.
-export function shadeWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallSide, wallH: number, base: number, cornerAtStart: boolean, openings: Opening[]) {
+export function shadeWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallSide, wallH: number, base: number, cornerAtStart: boolean, openings: Opening[], glow = '255,240,205') {
   onWall(ctx, P, wall, wallH, () => {
     const L = wallLen(wall) * PX;
     const H = wallH * PX;
@@ -240,12 +321,80 @@ export function shadeWall(ctx: CanvasRenderingContext2D, P: Project, wall: WallS
       const cx = ((o.u0 + o.u1) / 2) * PX;
       const cy = (wallH - (o.z0 + o.z1) / 2) * PX;
       const g = ctx.createRadialGradient(cx, cy, 0.3 * PX, cx, cy, 1.5 * PX);
-      g.addColorStop(0, 'rgba(255,240,205,0.5)');
-      g.addColorStop(1, 'rgba(255,240,205,0)');
+      g.addColorStop(0, `rgba(${glow},0.5)`);
+      g.addColorStop(1, `rgba(${glow},0)`);
       ctx.fillStyle = g;
       ctx.fillRect(cx - 1.5 * PX, cy - 1.5 * PX, 3 * PX, 3 * PX);
     }
   });
+}
+
+// A pool of light on the floor around (x, y), from a lamp, a fire or a ceiling tube.
+export function lightPool(ctx: CanvasRenderingContext2D, P: Project, x: number, y: number, r: number, color: string, power: number) {
+  if (power <= 0) return;
+  onFloor(ctx, P, () => {
+    ctx.beginPath();
+    ctx.rect(0, 0, ROOM_W * PX, ROOM_D * PX);
+    ctx.clip();
+    for (const [op, a] of [['overlay', 0.75], ['lighter', 0.16]] as const) {
+      ctx.globalCompositeOperation = op;
+      const g = ctx.createRadialGradient(x * PX, y * PX, 0, x * PX, y * PX, r * PX);
+      g.addColorStop(0, `rgba(${color},${Math.min(1, a * power)})`);
+      g.addColorStop(0.5, `rgba(${color},${Math.min(1, a * power) * 0.45})`);
+      g.addColorStop(1, `rgba(${color},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect((x - r) * PX, (y - r) * PX, r * 2 * PX, r * 2 * PX);
+    }
+  });
+}
+
+// ---- Kitchen materials ----
+
+// Big enough to cut any cabinet or appliance face out of.
+const FACE_W = 2.2;
+const FACE_H = 2.6;
+
+export function cabinetMaterial(f: Finish, wood: boolean): HTMLCanvasElement {
+  return cached(`cab:${f.id}`, () => {
+    const accent = f.accent ?? f.color;
+    if (f.old) return oldLaminate(FACE_W, FACE_H, f.color, accent, 3);
+    if (wood) return woodGrain(FACE_W, FACE_H, mix(f.color, 255, 0.1), mix(accent, 0, 0.3), f.id.length * 131);
+    return paintedPanel(FACE_W, FACE_H, f.color, 5);
+  });
+}
+
+export function applianceMaterial(kind: 'steel' | 'enamel' | 'iron' | 'wood', color: string): HTMLCanvasElement {
+  return cached(`appl:${kind}:${color}`, () => {
+    if (kind === 'steel') return brushedSteel(FACE_W, FACE_H, color, 7);
+    if (kind === 'iron') return castIron(FACE_W, FACE_H, color, 7);
+    if (kind === 'wood') return woodGrain(FACE_W, FACE_H, mix(color, 255, 0.16), mix(color, 0, 0.35), 9);
+    return enamel(FACE_W, FACE_H, color, 7);
+  });
+}
+
+// Countertops are painted once for the whole room, a little oversize for overhangs, so
+// stone veins and wood staves carry on from one cabinet to the next.
+export const COUNTER_PAD = 0.1;
+export function counterTexture(f: Finish): HTMLCanvasElement {
+  return cached(`counter:${f.id}`, () => {
+    const w = ROOM_W + COUNTER_PAD * 2;
+    const d = ROOM_D + COUNTER_PAD * 2;
+    switch (f.id) {
+      case 'ctr-marble':
+        return marble(w, d, f.color, mix(f.accent ?? '#c9c9cc', 0, 0.3));
+      case 'ctr-butcher':
+        return butcherBlock(w, d, f.color);
+      case 'ctr-concrete':
+        return concrete(w, d, f.color);
+      case 'ctr-terrazzo':
+        return terrazzo(w, d, f.color, f.accent ?? '#d27b5a');
+    }
+    return laminate(w, d, f.color, !!f.old);
+  });
+}
+
+export function splashTexture(f: Finish, wall: WallSide, h: number): HTMLCanvasElement {
+  return cached(`splash:${f.id}:${wall}`, () => wallTile(wallLen(wall), h, (f.pattern ?? 'subway') as TileKind, f.color, f.accent ?? mix(f.color, 0, 0.2), WALL_SEED[wall]));
 }
 
 // ---- Age ----
