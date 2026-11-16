@@ -1,11 +1,11 @@
 // Isometric canvas renderer for one cutaway room.
 import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
-import { designToView, placedToView, rectToView, rotDir, toView, viewDims, wallFromView, wallSpotToView, type View } from './view';
+import { designToView, placedToView, rotDir, toView, viewDims, wallFromView, wallSpotToView, type View } from './view';
 import { drawJunk, tileSpace } from './art/props';
 import { hash2 } from './art/noise';
 import { drawArt } from './art/wallart';
-import { castShadow, floorTexture, grime, onPlane, onWallSlot, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type MoldLevel, type Opening, type Project } from './art/scene';
+import { castShadow, floorTexture, grime, onPlane, onWallSlot, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type Damage, type Opening, type Project } from './art/scene';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -107,13 +107,13 @@ interface WallArt {
   P: Project;
   world: WallSide;
   cornerAtStart: boolean;
-  mold: MoldLevel;
+  dmg: Damage;
   openings: Opening[];
 }
 
 function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finish, art: WallArt) {
   const len = wall === 'back' ? RW : RD;
-  const tex = wallTexture(f, art.world, WALL_H, art.mold);
+  const tex = wallTexture(f, art.world, WALL_H, art.dmg);
   onWall(ctx, art.P, art.world, WALL_H, () => ctx.drawImage(tex, 0, 0));
   shadeWall(ctx, art.P, art.world, WALL_H, wall === 'back' ? 0.02 : 0.13, art.cornerAtStart, art.openings);
   // Baseboard and top edge.
@@ -492,25 +492,6 @@ const depth = (p: Placed) => {
   return p.x + p.y + (f.w + f.d) / 2 + (itemById(p.id).h < 0.1 ? -10 : 0);
 };
 
-// Where each kind of trouble shows itself: a stain before it is found, a mark after.
-// Positions are in the room (world space); drawScene maps them to the current view.
-const WALL_CLUES: Record<string, { wall: WallSide; at: number; h: number; color: string }> = {
-  'water-damage': { wall: 'back', at: 5.5, h: 2.2, color: 'rgba(120,80,30,0.25)' },
-  mold: { wall: 'left', at: 1.2, h: 2.2, color: 'rgba(40,50,35,0.25)' },
-  'peeling-paint': { wall: 'back', at: 2.4, h: 1.4, color: 'rgba(248,244,232,0.45)' },
-  // Low on the wall, under the sill, where rust rings actually form.
-  'salt-rust': { wall: 'left', at: 4.2, h: 0.65, color: 'rgba(160,75,35,0.3)' },
-};
-
-// Each mark is a 1.4 x 1 tile patch with its top-left corner at `at`.
-const MARK_W = 1.4;
-const MARK_D = 1;
-const FLOOR_MARKS: Record<string, { at: [number, number]; color: string; stroke: string }> = {
-  'dry-rot': { at: [2.3, 1.2], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
-  termites: { at: [5.5, 3.6], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
-  'rusty-water-line': { at: [4.6, 2.3], color: 'rgba(130,60,30,0.4)', stroke: 'rgba(130,60,30,0.65)' },
-};
-
 export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneOpts = {}) {
   const v = o.view ?? 0;
   setView(v);
@@ -524,8 +505,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   const wallF = finishById(d.wall);
   const light = finishById(d.lighting);
   const P: Project = (x, y, z = 0) => iso(...toView(v, x, y), z);
-  const moldState = s.issues.find((i) => i.id === 'mold')?.status;
-  const mold: MoldLevel = moldState === 'hidden' ? 1 : moldState === 'found' || moldState === 'resurfaced' ? 2 : 0;
+  // Trouble shows as a hint in the walls before it is found, and in full once it is.
+  // What is under the floor stays out of sight until the floor comes up.
+  const dmg: Damage = {};
+  for (const i of s.issues) {
+    if (i.status === 'found' || i.status === 'resurfaced') dmg[i.id] = 2;
+    else if (i.status === 'hidden' && issueById(i.id).trigger === 'walls') dmg[i.id] = 1;
+  }
   const openings: Opening[] = s.design.windows.map((w) => {
     const big = w.finish === 'win-picture';
     const door = w.finish === 'win-french';
@@ -533,7 +519,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   });
   for (const wall of ['back', 'left'] as const) {
     const world = wallFromView(v, wall, 0).wall;
-    drawWall(ctx, wall, wallF, { P, world, cornerAtStart: wallSpotToView(v, world, 0).u < 0.5, mold, openings });
+    drawWall(ctx, wall, wallF, { P, world, cornerAtStart: wallSpotToView(v, world, 0).u < 0.5, dmg, openings });
   }
   drawBacksplash(ctx, d);
   for (const w of d.windows) if (w.wall === 'back' || w.wall === 'left') drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
@@ -554,23 +540,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     poly(ctx, [wallPt(wall, slot + 0.05, 0.2), wallPt(wall, slot + 0.95, 0.2), wallPt(wall, slot + 0.95, WALL_H - 0.15), wallPt(wall, slot + 0.05, WALL_H - 0.15)], 'rgba(255,200,90,0.18)', 'rgba(230,160,50,0.9)', 2);
   }
 
-  // Hints of trouble before it is found.
-  for (const i of s.issues) {
-    if (i.status !== 'hidden') continue;
-    const clue = WALL_CLUES[i.id];
-    if (!clue || i.id === 'mold') continue;
-    const at = wallSpotToView(v, clue.wall, clue.at);
-    // Only the back and left walls are drawn full height; the others are cut down.
-    if (at.wall !== 'back' && at.wall !== 'left') continue;
-    const [cx, cy] = wallPt(at.wall, at.u, clue.h);
-    ctx.fillStyle = clue.color;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, 22, 14, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
   const floorF = finishById(d.floor);
-  const floorTex = floorTexture(floorF);
+  const floorTex = floorTexture(floorF, dmg);
   onFloor(ctx, P, () => ctx.drawImage(floorTex, 0, 0));
   shadeFloor(ctx, P);
   sunPools(ctx, P, openings);
@@ -578,15 +549,6 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     const { x, y } = o.hoverTile;
     poly(ctx, [iso(x, y), iso(x + 1, y), iso(x + 1, y + 1), iso(x, y + 1)], 'rgba(255,255,255,0.25)', 'rgba(230,160,50,0.8)', 1.5);
   }
-  // Trouble you have already found, marked where it is.
-  for (const i of s.issues) {
-    if (i.status !== 'found') continue;
-    const mark = FLOOR_MARKS[i.id];
-    if (!mark) continue;
-    const r = rectToView(v, mark.at[0], mark.at[1], MARK_W, MARK_D);
-    poly(ctx, [iso(r.x, r.y), iso(r.x + r.w, r.y), iso(r.x + r.w, r.y + r.d), iso(r.x, r.y + r.d)], mark.color, mark.stroke);
-  }
-
   const all: { p: Placed; opts: ItemOpts; alpha?: number }[] = [
     ...d.items.map((p) => {
       const selected = p.uid === o.selectedUid;
