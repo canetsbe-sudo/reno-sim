@@ -463,6 +463,21 @@ const depth = (p: Placed) => {
   return p.x + p.y + (f.w + f.d) / 2 + (itemById(p.id).h < 0.1 ? -10 : 0);
 };
 
+// Where each kind of trouble shows itself: a stain before it is found, a mark after.
+const WALL_CLUES: Record<string, { wall: WallSide; at: number; h: number; color: string }> = {
+  'water-damage': { wall: 'back', at: 5.5, h: 2.2, color: 'rgba(120,80,30,0.25)' },
+  mold: { wall: 'left', at: 1.2, h: 2.2, color: 'rgba(40,50,35,0.25)' },
+  'peeling-paint': { wall: 'back', at: 2.4, h: 1.4, color: 'rgba(248,244,232,0.45)' },
+  // Low on the wall, under the sill, where rust rings actually form.
+  'salt-rust': { wall: 'left', at: 4.2, h: 0.65, color: 'rgba(160,75,35,0.3)' },
+};
+
+const FLOOR_MARKS: Record<string, { at: [number, number]; color: string; stroke: string }> = {
+  'dry-rot': { at: [2.3, 1.2], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
+  termites: { at: [5.5, 3.6], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
+  'rusty-water-line': { at: [4.6, 2.3], color: 'rgba(130,60,30,0.4)', stroke: 'rgba(130,60,30,0.65)' },
+};
+
 export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneOpts = {}) {
   const v = o.view ?? 0;
   setView(v);
@@ -488,13 +503,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   // Hints of trouble before it is found.
   for (const i of s.issues) {
     if (i.status !== 'hidden') continue;
-    if (i.id === 'water-damage' || i.id === 'mold') {
-      const [cx, cy] = wallPt(i.id === 'mold' ? 'left' : 'back', i.id === 'mold' ? 1.2 : 5.5, 2.2);
-      ctx.fillStyle = i.id === 'mold' ? 'rgba(40,50,35,0.25)' : 'rgba(120,80,30,0.25)';
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, 22, 14, 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const clue = WALL_CLUES[i.id];
+    if (!clue) continue;
+    const [cx, cy] = wallPt(clue.wall, clue.at, clue.h);
+    ctx.fillStyle = clue.color;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 22, 14, 0.3, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawFloor(ctx, finishById(d.floor));
@@ -502,11 +517,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     const { x, y } = o.hoverTile;
     poly(ctx, [iso(x, y), iso(x + 1, y), iso(x + 1, y + 1), iso(x, y + 1)], 'rgba(255,255,255,0.25)', 'rgba(230,160,50,0.8)', 1.5);
   }
+  // Trouble you have already found, marked where it is.
   for (const i of s.issues) {
-    if (i.status === 'found' && (i.id === 'dry-rot' || i.id === 'termites')) {
-      const at = i.id === 'dry-rot' ? [2.3, 1.2] : [5.5, 3.6];
-      poly(ctx, [iso(at[0], at[1]), iso(at[0] + 1.4, at[1]), iso(at[0] + 1.4, at[1] + 1), iso(at[0], at[1] + 1)], 'rgba(60,40,20,0.45)', 'rgba(60,40,20,0.7)');
-    }
+    if (i.status !== 'found') continue;
+    const mark = FLOOR_MARKS[i.id];
+    if (!mark) continue;
+    const [ax, ay] = mark.at;
+    poly(ctx, [iso(ax, ay), iso(ax + 1.4, ay), iso(ax + 1.4, ay + 1), iso(ax, ay + 1)], mark.color, mark.stroke);
   }
 
   const all: { p: Placed; opts: ItemOpts; alpha?: number }[] = [
