@@ -136,7 +136,7 @@ export function finishPreview(f: Finish): string {
       case 'floor':
         return textureCrop(floorTexture(f), 3.2);
       case 'wall':
-        return textureCrop(wallTexture(f, 'back', WALL_H, 0), 2.6);
+        return textureCrop(wallTexture(f, 'back', WALL_H), 2.6);
       case 'cabinet':
         return sceneCrop(showroom({ cabinet: f.id, counter: 'ctr-laminate', items: RUN }), [3, 0.5, 0.5], 150);
       case 'counter':
