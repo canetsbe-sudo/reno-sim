@@ -149,8 +149,8 @@ function canvasPoint(e: PointerEvent) {
 canvas.addEventListener('pointermove', (e) => {
   if (!state) return;
   const p = canvasPoint(e);
-  ui.hoverTile = pickTile(p.x, p.y);
-  ui.hoverWall = ui.hoverTile ? undefined : pickWall(p.x, p.y);
+  ui.hoverTile = pickTile(ui.view, p.x, p.y);
+  ui.hoverWall = ui.hoverTile ? undefined : pickWall(ui.view, p.x, p.y);
   draw();
 });
 canvas.addEventListener('pointerleave', () => {
@@ -161,8 +161,8 @@ canvas.addEventListener('pointerleave', () => {
 canvas.addEventListener('pointerdown', (e) => {
   if (!state) return;
   const p = canvasPoint(e);
-  const tile = pickTile(p.x, p.y);
-  const wall = tile ? undefined : pickWall(p.x, p.y);
+  const tile = pickTile(ui.view, p.x, p.y);
+  const wall = tile ? undefined : pickWall(ui.view, p.x, p.y);
   if (state.stage === 'clear' && tile) {
     const t = worldTile(tile);
     clickJunk(t.x, t.y, e);
