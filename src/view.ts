@@ -79,34 +79,45 @@ export function placedFromView(v: View, id: string, vx: number, vy: number, worl
   return { id, x: at.x, y: at.y, rot: worldRot };
 }
 
-// The midpoint of a wall slot, on the floor.
-function slotMid(side: WallSide, slot: number, w: number, d: number): [number, number] {
-  if (side === 'back') return [slot + 0.5, 0];
-  if (side === 'front') return [slot + 0.5, d];
-  if (side === 'left') return [0, slot + 0.5];
-  return [w, slot + 0.5];
+// A point a distance u along a wall, on the floor.
+function wallPoint(side: WallSide, u: number, w: number, d: number): [number, number] {
+  if (side === 'back') return [u, 0];
+  if (side === 'front') return [u, d];
+  if (side === 'left') return [0, u];
+  return [w, u];
 }
 
-function sideAt(x: number, y: number, d: number): { wall: WallSide; slot: number } {
+// The wall a floor point on the room's edge sits against, and how far along it.
+function wallAt(x: number, y: number, d: number): { wall: WallSide; u: number } {
   const e = 1e-6;
-  if (Math.abs(y) < e) return { wall: 'back', slot: Math.floor(x) };
-  if (Math.abs(y - d) < e) return { wall: 'front', slot: Math.floor(x) };
-  if (Math.abs(x) < e) return { wall: 'left', slot: Math.floor(y) };
-  return { wall: 'right', slot: Math.floor(y) };
+  if (Math.abs(y) < e) return { wall: 'back', u: x };
+  if (Math.abs(y - d) < e) return { wall: 'front', u: x };
+  if (Math.abs(x) < e) return { wall: 'left', u: y };
+  return { wall: 'right', u: y };
+}
+
+// A spot on a wall (any distance along it, not just a slot), world to view.
+export function wallSpotToView(v: View, side: WallSide, u: number) {
+  const [vx, vy] = toView(v, ...wallPoint(side, u, ROOM_W, ROOM_D));
+  return wallAt(vx, vy, viewDims(v).d);
 }
 
 export function wallToView(v: View, side: WallSide, slot: number) {
-  const [mx, my] = slotMid(side, slot, ROOM_W, ROOM_D);
-  const [vx, vy] = toView(v, mx, my);
-  const dims = viewDims(v);
-  return sideAt(vx, vy, dims.d);
+  const at = wallSpotToView(v, side, slot + 0.5);
+  return { wall: at.wall, slot: Math.floor(at.u) };
 }
 
 export function wallFromView(v: View, side: WallSide, slot: number) {
   const dims = viewDims(v);
-  const [mx, my] = slotMid(side, slot, dims.w, dims.d);
-  const [wx, wy] = toWorld(v, mx, my);
-  return sideAt(wx, wy, ROOM_D);
+  const [wx, wy] = toWorld(v, ...wallPoint(side, slot + 0.5, dims.w, dims.d));
+  const at = wallAt(wx, wy, ROOM_D);
+  return { wall: at.wall, slot: Math.floor(at.u) };
+}
+
+// A floor rectangle, world to view. Width and depth swap on odd turns.
+export function rectToView(v: View, x: number, y: number, w: number, d: number) {
+  const at = rectTo((px, py) => toView(v, px, py), x, y, w, d);
+  return { ...at, w: v % 2 ? d : w, d: v % 2 ? w : d };
 }
 
 export function designToView(v: View, d: Design): Design {

@@ -1,7 +1,7 @@
 // Isometric canvas renderer for one cutaway room.
 import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
-import { designToView, placedToView, rotDir, viewDims, type View } from './view';
+import { designToView, placedToView, rectToView, rotDir, viewDims, wallSpotToView, type View } from './view';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -475,6 +475,7 @@ const depth = (p: Placed) => {
 };
 
 // Where each kind of trouble shows itself: a stain before it is found, a mark after.
+// Positions are in the room (world space); drawScene maps them to the current view.
 const WALL_CLUES: Record<string, { wall: WallSide; at: number; h: number; color: string }> = {
   'water-damage': { wall: 'back', at: 5.5, h: 2.2, color: 'rgba(120,80,30,0.25)' },
   mold: { wall: 'left', at: 1.2, h: 2.2, color: 'rgba(40,50,35,0.25)' },
@@ -483,6 +484,9 @@ const WALL_CLUES: Record<string, { wall: WallSide; at: number; h: number; color:
   'salt-rust': { wall: 'left', at: 4.2, h: 0.65, color: 'rgba(160,75,35,0.3)' },
 };
 
+// Each mark is a 1.4 x 1 tile patch with its top-left corner at `at`.
+const MARK_W = 1.4;
+const MARK_D = 1;
 const FLOOR_MARKS: Record<string, { at: [number, number]; color: string; stroke: string }> = {
   'dry-rot': { at: [2.3, 1.2], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
   termites: { at: [5.5, 3.6], color: 'rgba(60,40,20,0.45)', stroke: 'rgba(60,40,20,0.7)' },
@@ -516,7 +520,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     if (i.status !== 'hidden') continue;
     const clue = WALL_CLUES[i.id];
     if (!clue) continue;
-    const [cx, cy] = wallPt(clue.wall, clue.at, clue.h);
+    const at = wallSpotToView(v, clue.wall, clue.at);
+    // Only the back and left walls are drawn full height; the others are cut down.
+    if (at.wall !== 'back' && at.wall !== 'left') continue;
+    const [cx, cy] = wallPt(at.wall, at.u, clue.h);
     ctx.fillStyle = clue.color;
     ctx.beginPath();
     ctx.ellipse(cx, cy, 22, 14, 0.3, 0, Math.PI * 2);
@@ -533,8 +540,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
     if (i.status !== 'found') continue;
     const mark = FLOOR_MARKS[i.id];
     if (!mark) continue;
-    const [ax, ay] = mark.at;
-    poly(ctx, [iso(ax, ay), iso(ax + 1.4, ay), iso(ax + 1.4, ay + 1), iso(ax, ay + 1)], mark.color, mark.stroke);
+    const r = rectToView(v, mark.at[0], mark.at[1], MARK_W, MARK_D);
+    poly(ctx, [iso(r.x, r.y), iso(r.x + r.w, r.y), iso(r.x + r.w, r.y + r.d), iso(r.x, r.y + r.d)], mark.color, mark.stroke);
   }
 
   const all: { p: Placed; opts: ItemOpts; alpha?: number }[] = [
