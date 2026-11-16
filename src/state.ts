@@ -194,7 +194,8 @@ export const DEFAULT_PATCH_RISK = 0.4;
 
 export function resolveIssue(s: GameState, issueId: string, optionIndex: number, rng: Rng = Math.random): void {
   const i = s.issues.find((x) => x.id === issueId);
-  if (!i) return;
+  // Only open issues can be dealt with: not ones still hidden, or already fixed or patched.
+  if (!i || (i.status !== 'found' && i.status !== 'resurfaced')) return;
   const opt = issueOptions(i)[optionIndex];
   if (!opt) return;
   if (isBudget(s)) s.spent += opt.cost;

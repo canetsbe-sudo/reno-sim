@@ -89,6 +89,28 @@ describe('clearing out', () => {
 });
 
 describe('repairs', () => {
+  it('only acts on issues that are found or resurfaced', () => {
+    const s = newGame('fixer', 'budget', false, always);
+    const status = (id: string) => s.issues.find((i) => i.id === id)!.status;
+    const before = { spent: s.spent, day: s.day };
+    // Still hidden under the floor.
+    resolveIssue(s, 'dry-rot', 0);
+    expect(status('dry-rot')).toBe('hidden');
+    // Fixed once; a second fix does nothing.
+    resolveIssue(s, 'leaky-sink', 0);
+    const afterFix = { spent: s.spent, day: s.day };
+    expect(afterFix).not.toEqual(before);
+    resolveIssue(s, 'leaky-sink', 1);
+    expect(status('leaky-sink')).toBe('fixed');
+    expect({ spent: s.spent, day: s.day }).toEqual(afterFix);
+    // A resurfaced patch can still be fixed.
+    clearRoom(s);
+    resolveIssue(s, 'dry-rot', 1, always);
+    s.issues.find((i) => i.id === 'dry-rot')!.status = 'resurfaced';
+    resolveIssue(s, 'dry-rot', 0);
+    expect(status('dry-rot')).toBe('fixed');
+  });
+
   it('a patch is cheaper now', () => {
     const s = newGame('fixer', 'budget', false, always);
     clearRoom(s);
