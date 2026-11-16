@@ -1,11 +1,14 @@
 // Isometric canvas renderer for one cutaway room.
 import { ROOM_D, ROOM_W, finishById, itemById, issueById, type Finish, type Rot, type WallSide } from './data';
 import { footprint, type Design, type GameState, type Placed } from './state';
-import { designToView, placedToView, rotDir, toView, viewDims, wallFromView, wallSpotToView, type View } from './view';
+import { designToView, placedToView, rotDir, toView, toWorld, viewDims, wallFromView, wallSpotToView, type View } from './view';
+import { applianceFront, applianceSide, baseFront, cabLook, cabinetSide, cooktop, pantryFront, sinkBowl } from './art/fronts';
+import { drawFurniture } from './art/furniture';
+import { PX } from './art/surfaces';
 import { drawJunk, tileSpace } from './art/props';
 import { hash2 } from './art/noise';
 import { drawArt } from './art/wallart';
-import { castShadow, floorTexture, grime, onPlane, onWallSlot, onFloor, onWall, shadeFloor, shadeWall, sunPools, wallTexture, type Damage, type Opening, type Project } from './art/scene';
+import { COUNTER_PAD, applianceMaterial, cabinetMaterial, castShadow, counterTexture, floorTexture, grime, lightPool, onPlane, onWallSlot, onFloor, onWall, setMood, shadeFloor, shadeWall, splashTexture, sunPools, wallTexture, type Damage, type Mood, type Opening, type Project } from './art/scene';
 
 export const TW = 72; // tile width on screen
 export const TH = 36; // tile height on screen
@@ -23,7 +26,9 @@ const originX = (v: View) => viewDims(v).d * (TW / 2) + MARGIN;
 let RW = ROOM_W;
 let RD = ROOM_D;
 let OX = originX(0);
+let VIEW: View = 0;
 function setView(v: View) {
+  VIEW = v;
   const dims = viewDims(v);
   RW = dims.w;
   RD = dims.d;
@@ -37,6 +42,9 @@ export const iso = (x: number, y: number, z = 0): Pt => [OX + (x - y) * (TW / 2)
 
 // A view-space floor point on screen, for a given camera view.
 export const screenPoint = (v: View, x: number, y: number, z = 0): Pt => [originX(v) + (x - y) * (TW / 2), OY + (x + y) * (TH / 2) - z * ZS];
+
+// A room (world) point on screen, for the view being drawn.
+const PW: Project = (x, y, z = 0) => iso(...toView(VIEW, x, y), z);
 
 // Screen point to floor tile, in view space.
 export function pickTile(v: View, sx: number, sy: number): { x: number; y: number } | undefined {
@@ -109,19 +117,20 @@ interface WallArt {
   cornerAtStart: boolean;
   dmg: Damage;
   openings: Opening[];
+  mood: Mood;
 }
 
 function drawWall(ctx: CanvasRenderingContext2D, wall: 'back' | 'left', f: Finish, art: WallArt) {
   const len = wall === 'back' ? RW : RD;
   const tex = wallTexture(f, art.world, WALL_H, art.dmg);
   onWall(ctx, art.P, art.world, WALL_H, () => ctx.drawImage(tex, 0, 0));
-  shadeWall(ctx, art.P, art.world, WALL_H, wall === 'back' ? 0.02 : 0.13, art.cornerAtStart, art.openings);
+  shadeWall(ctx, art.P, art.world, WALL_H, wall === 'back' ? 0.02 : 0.13, art.cornerAtStart, art.openings, art.mood.sun);
   // Baseboard and top edge.
   poly(ctx, [wallPt(wall, 0, 0), wallPt(wall, len, 0), wallPt(wall, len, 0.12), wallPt(wall, 0, 0.12)], shade(f.color, -0.3));
   line(ctx, wallPt(wall, 0, WALL_H), wallPt(wall, len, WALL_H), shade(f.color, -0.35), 2);
 }
 
-function drawWindow(ctx: CanvasRenderingContext2D, wall: WallSide, slot: number, f: Finish, light: string) {
+function drawWindow(ctx: CanvasRenderingContext2D, wall: WallSide, slot: number, f: Finish, light: string, sky: string) {
   const big = f.id === 'win-picture';
   const door = f.id === 'win-french';
   const u0 = slot + (big ? 0.06 : 0.18);
@@ -130,7 +139,7 @@ function drawWindow(ctx: CanvasRenderingContext2D, wall: WallSide, slot: number,
   const z1 = door ? 2.35 : 2.45;
   const frame = f.color;
   poly(ctx, [wallPt(wall, u0 - 0.05, z0 - 0.08), wallPt(wall, u1 + 0.05, z0 - 0.08), wallPt(wall, u1 + 0.05, z1 + 0.08), wallPt(wall, u0 - 0.05, z1 + 0.08)], frame);
-  const glass = f.old ? '#b9c8cf' : '#bfe0f2';
+  const glass = f.old ? '#b9c8cf' : sky;
   poly(ctx, [wallPt(wall, u0, z0), wallPt(wall, u1, z0), wallPt(wall, u1, z1), wallPt(wall, u0, z1)], glass);
   // Sky glint, tinted by the room's light.
   poly(ctx, [wallPt(wall, u0 + 0.08, z1 - 0.1), wallPt(wall, u0 + 0.3, z1 - 0.1), wallPt(wall, u0 + 0.12, z0 + 0.2), wallPt(wall, u0 + 0.06, z0 + 0.2)], shade(light, 0.6));
@@ -179,56 +188,81 @@ function drawStubs(ctx: CanvasRenderingContext2D, d: Design, wallF: Finish) {
 
 const SPLASH_H = 0.75;
 
-// Tile above every counter that sits against a wall.
-function drawBacksplash(ctx: CanvasRenderingContext2D, d: Design) {
+// Which tiles along a wall (in view space) get backsplash: every one with a counter-height
+// kitchen piece against it, whether or not that piece carries a countertop.
+export function splashRun(items: Placed[], wall: 'back' | 'left', len: number): { run: boolean[]; z0: number } {
+  const run: boolean[] = Array.from({ length: len }, () => false);
+  let z0 = 0.95;
+  for (const p of items) {
+    const def = itemById(p.id);
+    if (!(def.kind === 'cabinet' || def.kind === 'appliance' || def.kind === 'upgrade') || def.h > 1 || def.h < 0.8) continue;
+    if (wall === 'back' ? p.y !== 0 : p.x !== 0) continue;
+    const fp = footprint(p);
+    const a = wall === 'back' ? p.x : p.y;
+    for (let i = a; i < a + (wall === 'back' ? fp.w : fp.d); i++) run[i] = true;
+    z0 = def.h;
+  }
+  return { run, z0 };
+}
+
+// Tile along the wall above every counter-height kitchen piece that sits against it:
+// cabinets, the stove, the dishwasher. It stops at window frames, sills and doorways.
+function drawBacksplash(ctx: CanvasRenderingContext2D, d: Design, openings: Opening[], doors: { wall: WallSide; slot: number }[]) {
   const f = finishById(d.backsplash);
   if (f.cost === 0) return;
-  const accent = f.accent ?? shade(f.color, -0.2);
-  for (const p of d.items) {
-    const def = itemById(p.id);
-    if (!def.usesCounter) continue;
-    const fp = footprint(p);
-    const spans: ['back' | 'left', number, number][] = [];
-    if (p.y === 0) spans.push(['back', p.x, p.x + fp.w]);
-    if (p.x === 0) spans.push(['left', p.y, p.y + fp.d]);
-    for (const [wall, u0, u1] of spans) {
-      const z0 = def.h;
-      const z1 = def.h + SPLASH_H;
-      const shadeAmt = wall === 'left' ? -0.1 : 0;
-      poly(ctx, [wallPt(wall, u0, z0), wallPt(wall, u1, z0), wallPt(wall, u1, z1), wallPt(wall, u0, z1)], shade(f.color, shadeAmt));
-      const grout = shade(accent, shadeAmt);
-      if (f.pattern === 'subway') {
-        const rows = 6;
-        for (let r = 1; r < rows; r++) line(ctx, wallPt(wall, u0, z0 + (r * SPLASH_H) / rows), wallPt(wall, u1, z0 + (r * SPLASH_H) / rows), grout, 0.8);
-        for (let r = 0; r < rows; r++) {
-          const za = z0 + (r * SPLASH_H) / rows;
-          const zb = za + SPLASH_H / rows;
-          for (let u = u0 + (r % 2 ? 0.25 : 0.5); u < u1; u += 0.5) line(ctx, wallPt(wall, u, za), wallPt(wall, u, zb), grout, 0.8);
+  for (const wall of ['back', 'left'] as const) {
+    const len = wall === 'back' ? RW : RD;
+    const { run, z0 } = splashRun(d.items, wall, len);
+    if (!run.some(Boolean)) continue;
+    const z1 = z0 + SPLASH_H;
+    const world = wallFromView(VIEW, wall, 0).wall;
+    const along = world === 'back' || world === 'front' ? 0 : 1;
+    const worldU = (u: number) => toWorld(VIEW, wall === 'back' ? u : 0, wall === 'back' ? 0 : u)[along];
+    const tex = splashTexture(f, world, SPLASH_H);
+    onWall(ctx, PW, world, z1, () => {
+      const H = SPLASH_H * PX;
+      for (let i = 0; i < len; i++) {
+        if (!run[i]) continue;
+        let j = i;
+        while (j + 1 < len && run[j + 1]) j++;
+        const x0 = Math.min(worldU(i), worldU(j + 1)) * PX;
+        const x1 = Math.max(worldU(i), worldU(j + 1)) * PX;
+        i = j;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x0, 0, x1 - x0, H);
+        // Cut out anything set into the wall.
+        const cut = (u0: number, u1: number, za: number, zb: number) => {
+          const cx0 = Math.max(x0, u0 * PX);
+          const cx1 = Math.min(x1, u1 * PX);
+          const cy0 = Math.max(0, (z1 - zb) * PX);
+          const cy1 = Math.min(H, (z1 - za) * PX);
+          if (cx1 > cx0 && cy1 > cy0) ctx.rect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+        };
+        for (const o of openings) if (o.wall === world) cut(o.u0 - 0.08, o.u1 + 0.08, o.z0 - 0.16, o.z1 + 0.08);
+        for (const x of doors) if (x.wall === world) cut(x.slot + 0.03, x.slot + 0.97, 0, 2.5);
+        ctx.clip('evenodd');
+        ctx.drawImage(tex, 0, 0);
+        // The left wall sits in shade; the counter shades the bottom course.
+        if (wall === 'left') {
+          ctx.fillStyle = 'rgba(22,14,10,0.14)';
+          ctx.fillRect(x0, 0, x1 - x0, H);
         }
-      } else if (f.pattern === 'zellige') {
-        for (let u = u0; u < u1 - 0.01; u += 0.25) {
-          for (let z = z0; z < z1 - 0.01; z += 0.25) {
-            const k = Math.sin(u * 12.9 + z * 78.2) * 0.5 + 0.5;
-            poly(ctx, [wallPt(wall, u, z), wallPt(wall, u + 0.25, z), wallPt(wall, u + 0.25, z + 0.25), wallPt(wall, u, z + 0.25)], shade(f.color, shadeAmt + (k - 0.5) * 0.18), grout, 0.6);
-          }
-        }
-      } else if (f.pattern === 'herringbone') {
-        for (let u = u0; u < u1 - 0.01; u += 0.25) {
-          for (let z = z0; z < z1 - 0.01; z += 0.25) {
-            const up = Math.round((u - u0) / 0.25 + (z - z0) / 0.25) % 2 === 0;
-            line(ctx, wallPt(wall, u, up ? z : z + 0.25), wallPt(wall, u + 0.25, up ? z + 0.25 : z), grout, 0.8);
-          }
-        }
-      } else if (f.pattern === 'cement') {
-        for (let u = u0; u < u1 - 0.01; u += 0.375) {
-          for (let z = z0; z < z1 - 0.01; z += 0.375) {
-            const m = 0.1875;
-            poly(ctx, [wallPt(wall, u + m, z + 0.04), wallPt(wall, u + 0.335, z + m), wallPt(wall, u + m, z + 0.335), wallPt(wall, u + 0.04, z + m)], grout);
-          }
-        }
+        const g = ctx.createLinearGradient(0, H, 0, H - 0.2 * PX);
+        g.addColorStop(0, 'rgba(22,14,10,0.3)');
+        g.addColorStop(1, 'rgba(22,14,10,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x0, 0, x1 - x0, H);
+        // A finished top edge and ends.
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.fillRect(x0, 0, x1 - x0, 1.6);
+        ctx.fillStyle = 'rgba(40,26,14,0.45)';
+        ctx.fillRect(x0, 1.6, x1 - x0, 1.4);
+        ctx.fillRect(x0, 0, 1.6, H);
+        ctx.fillRect(x1 - 1.6, 0, 1.6, H);
+        ctx.restore();
       }
-      line(ctx, wallPt(wall, u0, z1), wallPt(wall, u1, z1), shade(accent, -0.2), 1.5);
-    }
+    });
   }
 }
 
@@ -287,6 +321,80 @@ function drawAge(ctx: CanvasRenderingContext2D, p: Placed, w: number, dep: numbe
   onPlane(ctx, c(0, 0), c(1, 0), c(0, 1), () => ctx.drawImage(grime(def.w, def.d, 'top', p.uid * 16 + 5), 0, 0));
 }
 
+// Draw on a piece's top in its own space: x across it, y from its back to its front.
+function onTop(ctx: CanvasRenderingContext2D, p: Placed, w: number, dep: number, z: number, fn: () => void) {
+  const def = itemById(p.id);
+  const l = tileSpace(p, w, dep);
+  const c = (lx: number, ly: number) => iso(...l(lx + 0.5 - def.w / 2, ly + 0.5 - def.d / 2), z);
+  onPlane(ctx, c(0, 0), c(1, 0), c(0, 1), fn);
+}
+
+// Paint the two faces of a box that the camera sees. `fn` is given which of the piece's
+// own sides it is painting (0 front, 1 right, 2 back, 3 left) and the face size in pixels.
+function paintFaces(ctx: CanvasRenderingContext2D, p: Placed, w: number, dep: number, z0: number, z1: number, fn: (side: number, W: number, H: number) => void) {
+  const { x, y } = p;
+  const H = (z1 - z0) * PX;
+  const face = (o: Pt, ax: Pt, ay: Pt, side: number, W: number, dim: number) =>
+    onPlane(ctx, o, ax, ay, () => {
+      ctx.beginPath();
+      ctx.rect(0, 0, W, H);
+      ctx.clip();
+      fn(side, W, H);
+      // Contact shadow at the floor, and the side face turned from the light.
+      const g = ctx.createLinearGradient(0, H, 0, H - 0.3 * PX);
+      g.addColorStop(0, 'rgba(22,14,10,0.22)');
+      g.addColorStop(1, 'rgba(22,14,10,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+      if (dim) {
+        ctx.fillStyle = `rgba(22,14,10,${dim})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+    });
+  face(iso(x, y + dep, z1), iso(x + 1, y + dep, z1), iso(x, y + dep, z1 - 1), (4 - p.rot) % 4, w * PX, 0);
+  face(iso(x + w, y + dep, z1), iso(x + w, y + dep - 1, z1), iso(x + w, y + dep, z1 - 1), (5 - p.rot) % 4, dep * PX, 0.2);
+}
+
+// Cut a face-sized piece out of a big sheet of material, a different piece for each face.
+function sheet(ctx: CanvasRenderingContext2D, tex: HTMLCanvasElement, W: number, H: number, seed: number, side: number) {
+  const ox = Math.floor(hash2(seed, side, 11) * Math.max(0, tex.width - W));
+  const oy = Math.floor(hash2(seed, side, 12) * Math.max(0, tex.height - H));
+  ctx.drawImage(tex, ox, oy, W, H, 0, 0, W, H);
+}
+
+// The countertop over a piece: the room-wide slab texture, cut to this piece's top.
+function drawCounter(ctx: CanvasRenderingContext2D, f: Finish, aged: boolean, x: number, y: number, w: number, dep: number, z: number) {
+  const o = 0.03;
+  const t = 0.08;
+  const c = aged ? hexMix(f.color, '#c2ad7c', 0.3) : f.color;
+  box(ctx, x - o, y - o, z, w + o * 2, dep + o * 2, t, tones(shade(c, -0.08), c));
+  const top = [iso(x - o, y - o, z + t), iso(x + w + o, y - o, z + t), iso(x + w + o, y + dep + o, z + t), iso(x - o, y + dep + o, z + t)];
+  ctx.save();
+  ctx.beginPath();
+  top.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
+  ctx.closePath();
+  ctx.clip();
+  const tex = counterTexture(f);
+  onPlane(ctx, PW(0, 0, z + t), PW(1, 0, z + t), PW(0, 1, z + t), () => ctx.drawImage(tex, -COUNTER_PAD * PX, -COUNTER_PAD * PX));
+  if (aged) {
+    ctx.fillStyle = 'rgba(194,173,124,0.3)';
+    ctx.fill();
+  }
+  // Polished stone and sealed wood pick up a soft band of window light.
+  if (!f.old && f.id !== 'ctr-concrete') {
+    const g = ctx.createLinearGradient(top[0][0], top[0][1], top[2][0], top[2][1]);
+    g.addColorStop(0, 'rgba(255,255,255,0.26)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.04)');
+    g.addColorStop(1, 'rgba(60,40,20,0.08)');
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+  ctx.restore();
+  // Rounded front edges catch the light.
+  line(ctx, top[3], top[2], 'rgba(255,255,255,0.55)', 1);
+  line(ctx, top[2], top[1], 'rgba(255,255,255,0.3)', 1);
+}
+
 // An arrow on top of an item pointing the way its front faces.
 function drawArrow(ctx: CanvasRenderingContext2D, p: Placed, strong: boolean) {
   const { w, d } = footprint(p);
@@ -330,73 +438,45 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
 
   if (def.kind === 'junk' && drawJunk({ ctx, iso }, p, def)) {
     // Drawn by hand in art/props.
-  } else if (def.kind === 'plant') {
-    const potH = def.id === 'herbs' ? 0.35 : 0.45;
-    const m = 0.22;
-    box(ctx, x + m, y + m, 0, w - 2 * m, dep - 2 * m, potH, tones(def.side));
-    const [cx, cy] = iso(x + 0.5, y + 0.5, potH + (h - potH) / 2);
-    const r = def.id === 'herbs' ? 14 : 22;
-    ctx.fillStyle = shade(def.top, -0.1);
-    ctx.beginPath();
-    ctx.ellipse(cx, cy + 4, r, r * 0.9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = def.top;
-    ctx.beginPath();
-    ctx.ellipse(cx - 5, cy - 4, r * 0.7, r * 0.65, 0, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (def.kind === 'lamp') {
-    const [bx, by] = iso(x + 0.5, y + 0.5, 0);
-    const [tx, ty] = iso(x + 0.5, y + 0.5, h - 0.35);
-    ctx.fillStyle = def.side;
-    ctx.beginPath();
-    ctx.ellipse(bx, by, 10, 5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    line(ctx, [bx, by], [tx, ty], def.side, 3);
-    const m = 0.25;
-    box(ctx, x + m, y + m, h - 0.45, w - 2 * m, dep - 2 * m, 0.45, tones(def.top, '#fff6dc'));
-    const g = ctx.createRadialGradient(tx, ty, 2, tx, ty, 70);
-    g.addColorStop(0, 'rgba(255,220,150,0.35)');
-    g.addColorStop(1, 'rgba(255,220,150,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(tx - 70, ty - 70, 140, 140);
-  } else if (def.id === 'chair' || def.id === 'stool') {
-    const m = 0.2;
-    box(ctx, x + m, y + m, def.id === 'stool' ? 0.1 : 0.05, w - 2 * m, dep - 2 * m, h - 0.1, tones(def.side, def.top));
-    if (def.id === 'chair') {
-      // The back sits opposite the way the chair faces.
-      const t = 0.1;
-      if (p.rot === 0) box(ctx, x + m, y + m, h, w - 2 * m, t, 0.5, tones(def.side));
-      else if (p.rot === 1) box(ctx, x + m, y + m, h, t, dep - 2 * m, 0.5, tones(def.side));
-      else if (p.rot === 2) box(ctx, x + m, y + dep - m - t, h, w - 2 * m, t, 0.5, tones(def.side));
-      else box(ctx, x + w - m - t, y + m, h, t, dep - 2 * m, 0.5, tones(def.side));
-    }
-  } else if (def.kind === 'table') {
-    const legH = h - 0.08;
-    const m = 0.12;
-    for (const [lx, ly] of [[x + m, y + m], [x + w - m - 0.08, y + m], [x + m, y + dep - m - 0.08], [x + w - m - 0.08, y + dep - m - 0.08]]) {
-      box(ctx, lx, ly, 0, 0.08, 0.08, legH, tones(def.side));
-    }
-    box(ctx, x + 0.05, y + 0.05, legH, w - 0.1, dep - 0.1, 0.08, tones(def.side, def.top));
-  } else if (def.id === 'rug') {
-    poly(ctx, [iso(x + 0.1, y + 0.1, 0.01), iso(x + w - 0.1, y + 0.1, 0.01), iso(x + w - 0.1, y + dep - 0.1, 0.01), iso(x + 0.1, y + dep - 0.1, 0.01)], def.top, shade(def.top, -0.25), 2);
-    poly(ctx, [iso(x + 0.35, y + 0.35, 0.01), iso(x + w - 0.35, y + 0.35, 0.01), iso(x + w - 0.35, y + dep - 0.35, 0.01), iso(x + 0.35, y + dep - 0.35, 0.01)], undefined, '#f1e3cf', 2);
+  } else if (drawFurniture({ ctx, iso }, p, def, { w, d: dep })) {
+    // Tables, chairs, plants and the rest are drawn by hand in art/furniture.
   } else {
-    const counterTop = old(def.usesCounter ? ctr.color : def.top);
+    const aged = !!opts.aged;
     const bodyH = def.usesCounter ? h - 0.08 : h;
-    const toeKick = def.usesCabinet ? 0.08 : 0;
-    if (toeKick) box(ctx, x + 0.04, y + 0.04, 0, w - 0.08, dep - 0.08, toeKick, tones(shade(sideBase, -0.4)));
-    box(ctx, x, y, toeKick, w, dep, bodyH - toeKick, tones(sideBase, def.usesCounter ? shade(sideBase, 0.1) : def.top));
-    if (def.usesCounter) box(ctx, x - 0.03, y - 0.03, bodyH, w + 0.06, dep + 0.06, 0.08, tones(shade(counterTop, -0.05), counterTop));
+    const toeKick = def.usesCabinet ? 0.09 : 0;
+    const look = cabLook(cab.id);
+    // What the body is made of.
+    const steel = def.essential === 'stove' || def.id === 'fridge' || def.id === 'dishwasher';
+    const mat = def.usesCabinet
+      ? cabinetMaterial(cab, look.wood)
+      : def.id === 'coffee-bar'
+        ? applianceMaterial('wood', def.side)
+        : steel && !aged
+          ? applianceMaterial('steel', def.side)
+          : applianceMaterial('enamel', old(def.side));
+    if (toeKick) box(ctx, x + 0.05, y + 0.05, 0, w - 0.1, dep - 0.1, toeKick, tones('#2a2019'));
+    box(ctx, x, y, toeKick, w, dep, bodyH - toeKick, tones(sideBase, def.usesCabinet || def.usesCounter ? shade(sideBase, 0.1) : old(def.top)));
+    paintFaces(ctx, p, w, dep, toeKick, bodyH, (side, W, H) => {
+      sheet(ctx, mat, W, H, p.uid, side);
+      if (def.usesCabinet) {
+        if (aged) {
+          ctx.fillStyle = 'rgba(194,173,124,0.3)';
+          ctx.fillRect(0, 0, W, H);
+        }
+        if (side !== 0) cabinetSide(ctx, W, H);
+        else if (aged) return;
+        else if (def.id === 'tall-pantry') pantryFront(ctx, W, H, look);
+        else baseFront(ctx, W, H, look, Math.max(1, Math.round(W / PX)));
+      } else if (side !== 0 || !applianceFront(ctx, def.id, W, H)) applianceSide(ctx, W, H);
+    });
 
     const door = shade(sideBase, -0.12);
-    if (!facing) {
-      // Back of the piece: nothing to draw.
-    } else if (def.usesCabinet && def.id !== 'tall-pantry') {
+    if (facing && aged && def.usesCabinet && def.id !== 'tall-pantry') {
       const n = Math.max(1, Math.round(frontX ? dep : w));
       for (let i = 0; i < n; i++) {
         const a = i / n + 0.06 / n;
         const b = (i + 1) / n - 0.06 / n;
-        const wear = opts.aged ? hash2(p.uid, i, 3) : 1;
+        const wear = hash2(p.uid, i, 3);
         if (wear < 0.3) {
           // A door long gone: the dark inside and a sagging shelf.
           inset(ctx, fp, a, b, 0.2, 0.72, '#33261b', door);
@@ -411,56 +491,31 @@ export function drawItem(ctx: CanvasRenderingContext2D, p: Placed, d: Design, op
         inset(ctx, fp, a, b, 0.2, 0.72, undefined, door);
         line(ctx, fp(a + (b - a) * 0.15, 0.82), fp(b - (b - a) * 0.15, 0.82), door, 2);
       }
-    } else if (def.id === 'tall-pantry') {
+    } else if (facing && aged && def.id === 'tall-pantry') {
       inset(ctx, fp, 0.08, 0.92, 0.06, 0.62, undefined, door);
       inset(ctx, fp, 0.08, 0.92, 0.66, 0.96, undefined, door);
-    } else if (def.essential === 'fridge') {
-      inset(ctx, fp, 0.06, 0.94, 0.04, 0.6, undefined, shade(def.side, -0.15));
-      inset(ctx, fp, 0.06, 0.94, 0.63, 0.97, undefined, shade(def.side, -0.15));
-      line(ctx, fp(0.82, 0.68), fp(0.82, 0.88), '#777', 2.5);
-      line(ctx, fp(0.82, 0.35), fp(0.82, 0.55), '#777', 2.5);
-    } else if (def.essential === 'stove') {
-      inset(ctx, fp, 0.1, 0.9, 0.12, 0.65, '#30343a', '#555');
     }
-    if (def.essential === 'stove') {
-      for (let i = 0; i < (w > 1 || dep > 1 ? 6 : 4); i++) {
-        const k = w > 1 || dep > 1 ? 3 : 2;
-        const cu = ((i % k) + 0.5) / k;
-        const cv = (Math.floor(i / k) + 0.5) / 2;
-        const [cx, cy] = frontX ? iso(x + cv * w, y + cu * dep, h) : iso(x + cu * w, y + cv * dep, h);
-        ctx.strokeStyle = '#888';
-        ctx.lineWidth = 1.5;
+
+    if (def.usesCounter) drawCounter(ctx, ctr, aged, x, y, w, dep, bodyH);
+    if (def.essential === 'stove') onTop(ctx, p, w, dep, h + 0.002, () => cooktop(ctx, def.w * PX, def.d * PX));
+    if (def.essential === 'sink') {
+      onTop(ctx, p, w, dep, h + 0.002, () => sinkBowl(ctx, def.w * PX, def.d * PX));
+      // A gooseneck tap rising from the back of the bowl and arcing over it.
+      const l = tileSpace(p, w, dep);
+      const base = iso(...l(0.5, 0.17), h);
+      const tip = iso(...l(0.5, 0.42), h + 0.22);
+      const crown = iso(...l(0.5, 0.26), h + 0.5);
+      for (const [col, lw] of [['#6d757c', 3.4], ['#dfe4e8', 1.4]] as const) {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = lw;
+        ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.ellipse(cx, cy, 7, 3.5, 0, 0, Math.PI * 2);
+        ctx.moveTo(base[0], base[1]);
+        ctx.lineTo(base[0], base[1] - 9);
+        ctx.quadraticCurveTo(crown[0], crown[1] - 4, tip[0], tip[1]);
         ctx.stroke();
       }
-    }
-    if (!facing) {
-      // Skip front details.
-    } else if (def.id === 'dishwasher' || def.id === 'wine-fridge') {
-      inset(ctx, fp, 0.08, 0.92, 0.12, 0.85, def.id === 'wine-fridge' ? '#5a3a4a' : undefined, '#888');
-    } else if (def.id === 'coffee-bar') {
-      for (const v of [0.45, 0.7, 0.92]) line(ctx, fp(0.04, v), fp(0.96, v), shade(def.side, 0.3), 3);
-      inset(ctx, fp, 0.15, 0.45, 0.47, 0.66, '#c0c4c8', '#888');
-    } else if (def.id === 'fireplace') {
-      inset(ctx, fp, 0.2, 0.8, 0.15, 0.55, '#1d1d1f');
-      const [fx, fy] = fp(0.5, 0.28);
-      ctx.fillStyle = '#ff9a3c';
-      ctx.beginPath();
-      ctx.ellipse(fx, fy, 6, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (def.id === 'bench') {
-      inset(ctx, fp, 0.05, 0.95, 0.15, 0.85, undefined, shade(def.side, -0.2));
-    }
-    if (def.essential === 'sink') {
-      const [a, b, c2, e] = frontX
-        ? [iso(x + 0.25, y + 0.2, h + 0.001), iso(x + 0.25, y + 0.8, h + 0.001), iso(x + 0.75, y + 0.8, h + 0.001), iso(x + 0.75, y + 0.2, h + 0.001)]
-        : [iso(x + 0.2, y + 0.25, h + 0.001), iso(x + 0.8, y + 0.25, h + 0.001), iso(x + 0.8, y + 0.75, h + 0.001), iso(x + 0.2, y + 0.75, h + 0.001)];
-      poly(ctx, [a, b, c2, e], '#9aa4ab', '#7d868c');
-      // Faucet at the back edge, opposite the front.
-      const [fdx, fdy] = rotDir(p.rot);
-      const [tx, ty] = iso(x + w / 2 - fdx * 0.35 * w, y + dep / 2 - fdy * 0.35 * dep, h);
-      line(ctx, [tx, ty], [tx, ty - 14], '#9aa0a6', 3);
+      ctx.lineCap = 'butt';
     }
   }
 
@@ -504,6 +559,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
 
   const wallF = finishById(d.wall);
   const light = finishById(d.lighting);
+  const mood = setMood(light.id);
   const P: Project = (x, y, z = 0) => iso(...toView(v, x, y), z);
   // Trouble shows as a hint in the walls before it is found, and in full once it is.
   // What is under the floor stays out of sight until the floor comes up.
@@ -519,10 +575,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   });
   for (const wall of ['back', 'left'] as const) {
     const world = wallFromView(v, wall, 0).wall;
-    drawWall(ctx, wall, wallF, { P, world, cornerAtStart: wallSpotToView(v, world, 0).u < 0.5, dmg, openings });
+    drawWall(ctx, wall, wallF, { P, world, cornerAtStart: wallSpotToView(v, world, 0).u < 0.5, dmg, openings, mood });
   }
-  drawBacksplash(ctx, d);
-  for (const w of d.windows) if (w.wall === 'back' || w.wall === 'left') drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color);
+  drawBacksplash(ctx, d, openings, s.design.doors);
+  for (const w of d.windows) if (w.wall === 'back' || w.wall === 'left') drawWindow(ctx, w.wall, w.slot, finishById(w.finish), light.color, mood.glass);
   for (const x of d.doors) if (x.wall === 'back' || x.wall === 'left') drawDoor(ctx, x.wall, x.slot, wallF);
   // Wall art hangs at eye level on whichever walls are showing.
   for (const a of s.design.art) {
@@ -544,7 +600,14 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   const floorTex = floorTexture(floorF, dmg);
   onFloor(ctx, P, () => ctx.drawImage(floorTex, 0, 0));
   shadeFloor(ctx, P);
-  sunPools(ctx, P, openings);
+  sunPools(ctx, P, openings, mood.sun, mood.power);
+  // Lamps and fires warm the floor around them; the old tube just flattens everything.
+  if (mood.tube) lightPool(ctx, P, ROOM_W / 2, ROOM_D / 2, 3.4, '214,236,206', 0.5);
+  for (const p of s.design.items) {
+    const f = footprint(p);
+    if (p.id === 'lamp') lightPool(ctx, P, p.x + 0.5, p.y + 0.5, 2.3, '255,206,130', mood.lamp);
+    if (p.id === 'fireplace') lightPool(ctx, P, p.x + f.w / 2, p.y + f.d / 2, 1.9, '255,150,70', mood.lamp * 0.9);
+  }
   if (o.hoverTile) {
     const { x, y } = o.hoverTile;
     poly(ctx, [iso(x, y), iso(x + 1, y), iso(x + 1, y + 1), iso(x, y + 1)], 'rgba(255,255,255,0.25)', 'rgba(230,160,50,0.8)', 1.5);
@@ -571,13 +634,26 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: GameState, o: SceneO
   }
   drawStubs(ctx, d, wallF);
 
-  // Room lighting mood.
-  if (light.id !== 'light-daylight') {
+  // Room lighting mood: a colour wash over everything drawn, then the glow of each lamp
+  // and fire laid back on top, so they stand out as the room dims.
+  if (mood.wash) {
     ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = light.old ? 0.12 : 0.1;
-    ctx.fillStyle = light.color;
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = mood.wash;
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (const p of d.items) {
+      if (p.id !== 'lamp' && p.id !== 'fireplace') continue;
+      const lamp = p.id === 'lamp';
+      const [gx, gy] = iso(p.x + 0.5, p.y + 0.5, lamp ? 1.4 : 0.5);
+      const r = lamp ? 150 : 110;
+      const g = ctx.createRadialGradient(gx, gy, 4, gx, gy, r);
+      const a = (lamp ? 0.42 : 0.34) * mood.lamp;
+      g.addColorStop(0, `rgba(255,214,140,${a})`);
+      g.addColorStop(0.4, `rgba(255,190,110,${a * 0.4})`);
+      g.addColorStop(1, 'rgba(255,190,110,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(gx - r, gy - r, r * 2, r * 2);
+    }
     ctx.restore();
   }
 }
