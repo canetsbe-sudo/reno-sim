@@ -184,6 +184,21 @@ describe('design', () => {
     expect(rate(s).stars).toBeGreaterThanOrEqual(4);
   });
 
+  it('counts a lighting pick toward the style brief', () => {
+    const s = newGame('midcentury', 'budget', false, never);
+    clearRoom(s);
+    s.design.windows = [];
+    s.design.floor = 'floor-walnut';
+    s.design.wall = 'wall-mustard';
+    s.design.cabinet = 'cab-teak';
+    // Three matching surfaces fall one short of the brief.
+    const nailed = () => rate(s).good.some((g) => g.includes('brief'));
+    expect(nailed()).toBe(false);
+    // Warm and golden is tagged Mid-century in the Lighting tab, so it should make the fourth.
+    s.design.lighting = 'light-warm';
+    expect(nailed()).toBe(true);
+  });
+
   it('does not lower the rating for a patch that holds', () => {
     const s = newGame('fixer', 'budget', false, always);
     clearRoom(s);
